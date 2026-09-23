@@ -1,0 +1,24 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "pytest -m 'not live' -v",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "ruff check src tests",
+      "problemMatcher": ["$ruff"]
+    },
+    {
+      "label": "fmt",
+      "type": "shell",
+      "command": "ruff format src tests",
+      "problemMatcher": []
+    }
+  ]
+}
