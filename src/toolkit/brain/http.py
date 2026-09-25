@@ -264,3 +264,309 @@ def probe_key(key: Key) -> dict[str, Any]:
     import asyncio
 
     return asyncio.run(probe_key_async(key))
+
+# ── the chat call the agent uses ──────────────────────────────────────
+
+async def call_ai_async(
+    prompt: str,
+    *,
+    system: str | None = None,
+    turns: list[dict[str, str]] | None = None,
+    only_key_id: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> str:
+    """Send a prompt to whichever key answers first.
+
+    This is the core function. Everything the agent does goes through
+    here.
+
+    Behaviour, in order:
+
+      1. Load every enabled key.
+      2. Sort them by reliability (wins / (wins + fails)).
+      3. Try each in turn:
+           - post the request
+           - on 200: return the text
+           - on 429: rest the key for 65s and try the next
+           - on 4xx that means "bad model": mark the model bad and
+             try the next-best model on the same key
+           - on 5xx or network error: try the next key
+      4. If every key fails, return a sentence explaining what went
+         wrong. Never raises.
+
+    The response is always a string, on purpose — the agent loop
+    treats "here is the answer" and "here is why I could not answer"
+    as the same thing, because both are worth saying to the user.
+    """
+    from toolkit.brain.keys import (
+        bad_models_for,
+        is_resting,
+        load_keys,
+        mark_bad_model,
+        pick_best_model,
+        rest_key,
+        set_key_model,
+        clear_bad_models,
+    )
+
+    keys = [k for k in load_keys() if k.enabled]
+    if not keys:
+        return (
+            "NO KEYS YET — add one from aistudio.google.com or "
+            "console.groq.com, then try again."
+        )
+    if only_key_id:
+        keys = [k for k in keys if k.id == only_key_id]
+        if not keys:
+            return "That key is gone."
+
+    # Sort by reliability, most reliable first. Ties broken randomly
+    # so we do not always hammer the same key.
+    import random
+    random.shuffle(keys)
+    keys.sort(
+        key=lambda k: (k.wins + 1) / (k.wins + k.fails + 2),
+        reverse=True,
+    )
+
+    resting_count = 0
+    errors: list[str] = []
+
+    for k in keys:
+        if is_resting(k.id):
+            resting_count += 1
+            continue
+
+        result = await _try_one(
+            k,
+            prompt,
+            system=system,
+            turns=turns,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        if result["ok"]:
+            _bump_wins(k.id)
+            return result["text"]
+
+        # Failure modes
+        if result.get("billing"):
+            errors.append(f"{k.label}: no credit left")
+            continue
+        if result.get("rest"):
+            rest_key(k.id, 65)
+            errors.append(f"{k.label}: rate limited")
+            continue
+        if result.get("model_bad") and result.get("tried"):
+            errors.append(
+                f"{k.label}: models tried {result['tried']}"
+            )
+            continue
+        errors.append(f"{k.label}: {result.get('why', 'unknown')[:120]}")
+
+    if resting_count and resting_count == len(keys):
+        return (
+            "ALL KEYS ARE RESTING — wait about a minute, or add "
+            "another key."
+        )
+    if errors:
+        return (
+            "I could not get an answer. What each key said:\n"
+            + "\n".join(f"  · {e}" for e in errors[:5])
+        )
+    return "NO KEY AVAILABLE — every key is off."
+
+
+async def _try_one(
+    key: Any,
+    prompt: str,
+    *,
+    system: str | None,
+    turns: list[dict[str, str]] | None,
+    temperature: float | None,
+    max_tokens: int | None,
+) -> dict[str, Any]:
+    """One key. Try the current model; on model errors, heal and retry.
+
+    Returns a dict with at minimum {"ok": bool}. On success, "text".
+    On failure, "why" and possibly "rest", "billing", "model_bad".
+    """
+    from toolkit.brain.keys import (
+        bad_models_for,
+        clear_bad_models,
+        discover_model_for_key,
+        mark_bad_model,
+        pick_best_model,
+        set_key_model,
+    )
+
+    provider = BOOK.get(key.provider)
+    if provider is None:
+        return {"ok": False, "why": f"Unknown company: {key.provider}"}
+
+    # If the key has no model, discover one.
+    if not key.model:
+        models, model, why = discover_model_for_key(key)
+        if not model:
+            return {"ok": False, "why": why or "no usable model"}
+        key.model = model
+        key.models = models
+        set_key_model(key.id, model)
+
+    # Try the current model first.
+    result = await _post_completion(
+        key, prompt,
+        system=system, turns=turns,
+        temperature=temperature, max_tokens=max_tokens,
+    )
+    if result["ok"]:
+        return result
+
+    # If it looks like a model problem, try healing up to 4 more times.
+    if result.get("model_bad"):
+        tried = [key.model]
+        last_why = result.get("why", "")
+        for _ in range(4):
+            mark_bad_model(key.id, key.model)
+            models, model, why = discover_model_for_key(key)
+            if not model:
+                return {"ok": False, "why": why, "model_bad": True,
+                        "tried": ", ".join(tried)}
+            key.model = model
+            key.models = models
+            set_key_model(key.id, model)
+            tried.append(model)
+
+            result = await _post_completion(
+                key, prompt,
+                system=system, turns=turns,
+                temperature=temperature, max_tokens=max_tokens,
+            )
+            if result["ok"]:
+                return result
+            if not result.get("model_bad"):
+                # Not a model problem anymore, give up on this key.
+                return result
+            last_why = result.get("why", "")
+
+        return {"ok": False, "why": last_why, "model_bad": True,
+                "tried": ", ".join(tried[:4])}
+
+    return result
+
+
+async def _post_completion(
+    key: Any,
+    prompt: str,
+    *,
+    system: str | None,
+    turns: list[dict[str, str]] | None,
+    temperature: float | None,
+    max_tokens: int | None,
+) -> dict[str, Any]:
+    """One POST. Diagnose the response into a structured result."""
+    from toolkit.brain.providers import build_request
+
+    provider = BOOK.get(key.provider)
+    if provider is None:
+        return {"ok": False, "why": f"Unknown company: {key.provider}"}
+
+    req = build_request(
+        provider, key.model, key.key, prompt,
+        account=key.account,
+        system=system, turns=turns,
+        temperature=temperature, max_tokens=max_tokens,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            res = await client.post(
+                req["url"], headers=req["headers"], json=req["json"],
+            )
+    except httpx.HTTPError as exc:
+        return {"ok": False, "why": f"network error: {exc}"}
+
+    if res.status_code == 200:
+        try:
+            text = _read_text(provider.shape, res.text)
+            return {"ok": True, "text": text}
+        except ValueError as exc:
+            return {"ok": False, "why": str(exc)}
+
+    why = error_message(res.text) or f"HTTP {res.status_code}"
+
+    # 429: rate limit OR busy model — distinguish by the body
+    if res.status_code == 429:
+        if any(
+            marker in why.lower()
+            for marker in ("provider returned error", "upstream",
+                           "no available provider", "overloaded", "capacity")
+        ):
+            return {"ok": False, "why": why, "model_bad": True}
+        return {"ok": False, "why": why, "rest": True}
+
+    # 5xx: retry-able but not the key's fault
+    if res.status_code >= 500:
+        return {"ok": False, "why": why}
+
+    # Billing
+    low = why.lower()
+    if any(marker in low for marker in (
+        "payment required", "insufficient", "no credits",
+        "out of credit", "credit balance", "quota exceeded",
+        "exceeded your current quota", "billing", "top up",
+        "add credits", "purchase", "upgrade your plan",
+    )):
+        return {"ok": False, "why": why, "billing": True}
+
+    # 401/403: key rejected — not our problem to fix
+    if res.status_code in (401, 403):
+        return {"ok": False, "why": why, "permanent": True}
+
+    # 404: model gone
+    if res.status_code == 404:
+        return {"ok": False, "why": why, "model_bad": True}
+
+    # 400 with "model" wording: model rejected
+    if res.status_code == 400 and any(
+        marker in low
+        for marker in ("model", "not found", "unsupported",
+                       "deprecat", "does not exist", "no such")
+    ):
+        return {"ok": False, "why": why, "model_bad": True}
+
+    return {"ok": False, "why": why}
+
+
+def _bump_wins(key_id: str) -> None:
+    """Increase the win counter for a key, non-fatally."""
+    try:
+        from toolkit.brain import keys as km
+        with km._db() as conn:  # noqa: SLF001 — internal use by design
+            conn.execute(
+                "UPDATE keys SET wins = wins + 1 WHERE id = ?",
+                (key_id,),
+            )
+    except Exception:
+        pass
+
+
+def call_ai(
+    prompt: str,
+    *,
+    system: str | None = None,
+    turns: list[dict[str, str]] | None = None,
+    only_key_id: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> str:
+    """Blocking wrapper around call_ai_async. Used by the CLI."""
+    import asyncio
+
+    return asyncio.run(call_ai_async(
+        prompt,
+        system=system, turns=turns,
+        only_key_id=only_key_id,
+        temperature=temperature, max_tokens=max_tokens,
+    ))
