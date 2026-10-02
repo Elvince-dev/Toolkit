@@ -6,7 +6,7 @@ Python objects. Two kinds of adapter:
   * SheetAdapter     — required. The brain cannot work without one.
   * MailAdapter      — optional. Tools that need it raise a clear
                        error if the active adapter cannot do what is
-                       asked.
+                       asked.       
   * CalendarAdapter  — optional. Same contract.
 
 Every method returns plain data. No backend-specific objects escape

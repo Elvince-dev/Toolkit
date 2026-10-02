@@ -30,6 +30,9 @@ from toolkit.brain.keys import (
 )
 from toolkit.tools.registry import load_tools
 
+import nest_asyncio
+nest_asyncio.apply()
+
 
 app = typer.Typer(
     help="AI toolkit for tabular data — ask questions, run tools, manage keys.",

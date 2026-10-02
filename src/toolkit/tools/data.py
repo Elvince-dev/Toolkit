@@ -42,6 +42,9 @@ def _describe_sheet(_: dict[str, Any]) -> str:
     Reads every tab in full to get a true row count, then shows
     headers. This is the tool someone runs first, so the counts must
     be exact — "5 rows" when the tab has 8 is a lie.
+
+    Column names are shown in full up to the first six, then a count
+    of the remainder. No mid-word truncation.
     """
     adapter = sheet()
     tabs = adapter.list_tabs()
@@ -56,9 +59,11 @@ def _describe_sheet(_: dict[str, Any]) -> str:
         except Exception as exc:
             lines.append(f"  · {name}: could not read ({exc})")
             continue
-        cols = ", ".join(tab.headers[:6]) or "(no headers)"
-        if len(tab.headers) > 6:
-            cols += f", … (+{len(tab.headers) - 6})"
+        shown = tab.headers[:6]
+        cols = ", ".join(shown) or "(no headers)"
+        remaining = len(tab.headers) - len(shown)
+        if remaining > 0:
+            cols += f", +{remaining} more"
         lines.append(
             f"  · {name}: {tab.row_count} rows, "
             f"{tab.column_count} columns — {cols}"
@@ -282,7 +287,6 @@ def _guess_group_column(headers: list[str]) -> str | None:
         "branch", "department", "team", "segment", "kind", "stage",
         "channel", "source", "priority",
     )
-    low = [h.lower() for h in headers]
     for h in headers:
         hl = h.lower()
         for hint in hints:
