@@ -7,13 +7,13 @@ matcher that decides when a direct call can bypass the model.
 Ported from Code.gs. The differences from the original:
 
   * The registry is populated by importing modules, not by reading a
-    global TOOLS object at file-load time. This avoids the "which
-    script file loaded first?" problem that Code.gs has.
-  * Tool functions receive a dict of args and return a string, same
-    as the original. They can be sync or async; the caller awaits
-    whatever comes back.
+    global TOOLS object at file-load time.
+  * Tool functions receive a dict of args and return a string. They
+    can be sync or async; the caller awaits whatever comes back.
   * `run_direct` is separate from `load_tools` so the matcher list
     can be tested independently of the tool implementations.
+  * Every matcher is validated at first use — a matcher that points
+    at a nonexistent tool is a bug, not a soft failure.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ class Matcher:
     """One rule for handling a request without calling the model.
 
     test:  does this request match?
-    tool:  which tool to run
+    tool:  which tool to run (must be a registered tool name)
     args:  how to build the argument dict from the request text
     soft:  if True, a tool failure falls through to the agent rather
            than being reported. Used for matchers that might be wrong
@@ -111,15 +111,19 @@ class Matcher:
 # Rules are tried in order. The first one that matches wins.
 # Deliberately conservative: a wrong match is worse than no match.
 MATCHERS: list[Matcher] = [
+    # Group-by comes first because "count the rows by Region" also
+    # matches the count_rows rule, and we want the more specific one
+    # to win.
     Matcher(
-        name="count_by",
+        name="compare_groups_by",
         test=lambda t: bool(re.search(
-            r"\b(which|how many|count|breakdown|break ?down|group)\b"
-            r".{0,40}\bby\b", t, re.I)),
-        tool="count_by",
+            r"\b(which|how many|count|breakdown|break ?down|group|"
+            r"compare|split|rank)\b.{0,60}\bby\b",
+            t, re.I)),
+        tool="compare_groups",
         args=lambda t: {
             "tab": _find_tab(t),
-            "by": _find_column(t),
+            "column": _find_column(t),
         },
     ),
     Matcher(
@@ -165,16 +169,38 @@ MATCHERS: list[Matcher] = [
 ]
 
 
+def _validate_matchers() -> None:
+    """Every matcher must point at a real tool.
+
+    A typo in a matcher's tool name is a silent failure: run_direct
+    skips the matcher and tries the next one, so the wrong tool runs
+    and the user never learns why. This check turns that into a loud
+    error at first call instead.
+    """
+    tools = load_tools()
+    for matcher in MATCHERS:
+        if matcher.tool not in tools:
+            raise RuntimeError(
+                f"Matcher {matcher.name!r} points at tool "
+                f"{matcher.tool!r}, which is not registered. "
+                f"Available: {', '.join(sorted(tools))}"
+            )
+
+
 def run_direct(request: str) -> DirectResult | None:
     """Try to answer without the model. Returns None if no rule fits.
 
-    This is what makes `toolkit ask "how many rows in Sales?"` return
-    instantly instead of round-tripping to an AI provider. It is also
-    how the toolkit works with no key at all.
+    Validates matchers on first call so a typo in a tool name
+    surfaces immediately rather than silently choosing the wrong
+    tool.
     """
     text = str(request or "").strip()
     if not text:
         return None
+
+    # Validate once per process. If a matcher is broken, this raises
+    # the moment someone asks a question.
+    _validate_matchers()
 
     tools = load_tools()
     for matcher in MATCHERS:
@@ -246,12 +272,19 @@ def tool_said_no(reply: str) -> bool:
         return True
 
     # Explicit refusal or requirement anywhere in the reply
-    if re.search(r"\b(need|needs|requires?) (a|an|your) [A-Za-z ]{0,24}key\b",
-                 t, re.I):
+    if re.search(
+        r"\b(need|needs|requires?) (a|an|your) [A-Za-z ]{0,24}key\b",
+        t, re.I,
+    ):
         return True
-    if re.search(r"\b(no|not) (a )?(spreadsheet|sheet|tab|data|rows|"
-                 r"column|key|permission|access)\b", t, re.I) \
-       and "no pivot table was needed" not in t.lower():
+    if (
+        re.search(
+            r"\b(no|not) (a )?(spreadsheet|sheet|tab|data|rows|"
+            r"column|key|permission|access)\b",
+            t, re.I,
+        )
+        and "no pivot table was needed" not in t.lower()
+    ):
         return True
 
     # Openings that have always meant no

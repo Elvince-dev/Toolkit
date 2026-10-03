@@ -60,6 +60,21 @@ def test_load_tools_includes_the_expected_names():
         assert name in tools
 
 
+def test_every_matcher_points_at_a_real_tool():
+    """A matcher with a typo'd tool name is a silent failure.
+
+    This test would have caught the count_by → compare_groups bug
+    before it shipped. Every matcher must resolve.
+    """
+    tools = tool_registry.load_tools()
+    for matcher in tool_registry.MATCHERS:
+        assert matcher.tool in tools, (
+            f"Matcher {matcher.name!r} points at "
+            f"{matcher.tool!r}, which is not a registered tool. "
+            f"Available: {', '.join(sorted(tools))}"
+        )
+
+
 def test_tool_missing_reports_absent_fields():
     tool = tool_registry.Tool(name="x", what="y", need=("a", "b"))
     assert sorted(tool.missing({})) == ["a", "b"]
@@ -179,4 +194,25 @@ def test_run_direct_matches_describe(sales):
 def test_run_direct_returns_none_for_unmatched():
     result = tool_registry.run_direct("why did sales drop?")
     # This is not a direct-match case — the model must decide
+    assert result is None or result.tool != "count_rows"
+
+
+def test_run_direct_matches_compare_groups_by_region(sales):
+    """The bug: 'count the rows by Region' matched count_rows instead.
+
+    This test pins the fix. It must go through compare_groups and it
+    must include the region names.
+    """
+    result = tool_registry.run_direct("count the rows by Region")
+    assert result is not None, "no matcher fired at all"
+    assert result.tool == "compare_groups", (
+        f"expected compare_groups, got {result.tool}"
+    )
+    assert "Thika" in result.answer or "Ruaka" in result.answer
+
+
+def test_run_direct_matches_which_region_has_the_most(sales):
+    """The phrasing a person actually uses."""
+    result = tool_registry.run_direct("which region has the most rows?")
+    # Either compare_groups or none — but not count_rows
     assert result is None or result.tool != "count_rows"
