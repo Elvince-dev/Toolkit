@@ -127,6 +127,15 @@ MATCHERS: list[Matcher] = [
         },
     ),
     Matcher(
+        name="count_rows_in_named_tab",
+        test=lambda t: bool(re.search(
+            r"\b(how many rows|count (the )?rows|row count)\b"
+            r".{0,40}\b(in|from|of)\b",
+            t, re.I)),
+        tool="count_rows_in",
+        args=lambda t: {"tab": _find_tab(t)},
+    ),
+    Matcher(
         name="count_rows",
         test=lambda t: bool(re.search(
             r"\b(how many rows|count (the )?rows|row count|"

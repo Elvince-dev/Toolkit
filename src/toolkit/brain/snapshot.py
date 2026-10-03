@@ -300,9 +300,9 @@ def restore(snap_id: str) -> dict[str, Any]:
         "pre_snapshot": pre_id,
         "say": (
             f"Restored {snap.tab!r} from {snap.id} "
-            f"({snap.row_count} rows, taken {snap.when}).\n"
+            f"({snap.row_count} rows, taken {snap.when}).\n\n"
             f"Before restoring, I snapshotted the current state as "
-            f"{pre_id} — say 'undo' again to reverse this."
+            f"{pre_id}\n\nSay 'undo' again to reverse this."
         ),
     }
 
