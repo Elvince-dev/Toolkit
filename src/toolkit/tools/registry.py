@@ -68,10 +68,10 @@ def load_tools() -> dict[str, Tool]:
     toolkit.tools.registry for the Tool class, but the registry
     builds the dict by importing the tool modules.
     """
-    from toolkit.tools import data  # noqa: F401
+    from toolkit.tools import data, write  # noqa: F401
 
     out: dict[str, Tool] = {}
-    for module in (data,):
+    for module in (data, write):
         for name, tool in getattr(module, "TOOLS", {}).items():
             if name in out:
                 raise RuntimeError(
@@ -165,6 +165,20 @@ MATCHERS: list[Matcher] = [
             "tab": _find_tab(t),
             "column": _find_column(t),
         },
+    ),
+        Matcher(
+        name="undo",
+        test=lambda t: bool(re.search(
+            r"\b(undo|take that back|revert|restore)\b", t, re.I)),
+        tool="undo_last",
+        args=lambda t: {"tab": _find_tab(t)},
+    ),
+    Matcher(
+        name="snapshots",
+        test=lambda t: bool(re.search(
+            r"\b(snapshots?|undo history)\b", t, re.I)),
+        tool="list_snapshots",
+        args=lambda t: {"tab": _find_tab(t)},
     ),
 ]
 

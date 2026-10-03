@@ -1,127 +1,96 @@
-# Toolkit — Executive Summary
+# Toolkit Project Notes
 
-## Status at a Glance
-
-| Area | Status | Notes |
-| --- | --- | --- |
-| Core reasoning engine | ✅ Strong foundation | Data parsing, analysis, verification, provider abstraction, and tool routing are in place. |
-| Spreadsheet operations | ✅ Working | CSV-based adapter and direct tools cover core data inspection and aggregation. |
-| AI provider integration | ✅ Functional | Multi-provider key handling and request parsing are implemented. |
-| Test coverage | ✅ Good coverage | Unit tests cover parsing, analysis, verification, CSV behavior, tools, and keys. |
-| Production expansion | ⚠️ In progress | Mail, calendar, server, UI, and more tool groups remain to be added. |
-| Execution blocker | ⚠️ One key issue | Async/sync mismatch in the AI call path still needs cleanup. |
+## Overview
+This project is a Python toolkit for working with spreadsheet data, running structured analysis, and connecting to AI providers through a thin tool layer. The design is intentionally split between pure reasoning code and I/O-heavy adapters.
 
 ---
 
-## Executive Overview
-This project is a Python-based toolkit for spreadsheet analysis and AI-assisted operations. It is designed around a clean separation of concerns: the reasoning layer is kept pure and deterministic, while external systems such as CSV files, keys, and AI providers are isolated behind adapters and tools.
+## 1) Project Skeleton
 
-The architecture already demonstrates the core pattern needed for a broader platform: normalize the data, reason over it, verify the result, and then expose it through structured tools or CLI entry points.
-
----
-
-## What We Have Built
-
-### 1. Core Intelligence Layer
-The brain is responsible for analysis and decision-making without talking directly to files or external services.
-
-| Module | Role |
+| File | Purpose |
 | --- | --- |
-| `src/toolkit/brain/parsing.py` | Reads messy spreadsheet values like currencies, negatives, abbreviations, and date variants. |
-| `src/toolkit/brain/analysis.py` | Handles outliers, group counts, trend direction, concentration, and recent shifts. |
-| `src/toolkit/brain/verify.py` | Blocks hallucinations, invented numbers, and unsupported claims before returning an answer. |
-| `src/toolkit/brain/providers.py` | Encodes provider metadata for nearly 30 AI services and standardizes request/response handling. |
-| `src/toolkit/brain/keys.py` | Manages provider keys with rotation, discovery, and storage logic. |
-| `src/toolkit/brain/http.py` | Centralizes model-list fetches, key probing, and provider calls. |
-| `src/toolkit/brain/agent.py` | Runs the decision loop that checks for direct tools before escalating to model-driven execution. |
+| `pyproject.toml` | Single source of truth for dependencies, packaging, and the CLI entry point. |
+| `pytest.ini` | Test discovery, async setup, and custom markers such as `live` and `slow`. |
+| `ruff.toml` | Linting and formatting configuration with a 100-character line length and modern Python defaults. |
+| `.gitignore` | Excludes caches, virtual environments, local env files, and generated DB artifacts. |
+| `.python-version` | Pins Python 3.12.10 for pyenv users. |
+| `.env.example` / `.env` | Environment template and the actual local config (gitignored). |
+| `.vscode/settings.json` | Strict type checking, Ruff on save, and `src/` added to Python path resolution. |
+| `.vscode/launch.json` | Debug configs for pytest, CLI usage, and future server work. |
+| `.vscode/tasks.json` | Convenience tasks for test, lint, and dev flows. |
+| `.vscode/extensions.json` | Recommended editor extensions for Python, linting, and DB tooling. |
 
-### 2. Data Access Layer
-Adapters hide the external source of data from the reasoning layer.
+---
 
-| Module | Role |
+## 2) The Brain
+
+The brain is the reasoning layer. It operates on normalized data structures and does not perform direct file, HTTP, or Google I/O.
+
+| File | Summary |
 | --- | --- |
-| `src/toolkit/adapters/base.py` | Defines core data contracts and abstraction boundaries. |
-| `src/toolkit/adapters/registry.py` | Selects and caches the active adapter. |
-| `src/toolkit/adapters/sheets/csv_folder.py` | Reference implementation for spreadsheet data in a folder of CSV files. |
+| `src/toolkit/brain/parsing.py` | Extracts numbers and dates from messy spreadsheet values such as `KSh 2,000`, `(45)`, `1.5k`, and ambiguous day-first/month-first dates while preserving the quirks from the original logic. |
+| `src/toolkit/brain/analysis.py` | Pure statistical logic for IQR outliers, grouping, trend direction, concentration checks, and recent-shift detection on `TabData`. |
+| `src/toolkit/brain/verify.py` | Hallucination protection: checks invented numbers/figures, spots fabricated entities, rejects non-answers, and chooses the most defensible response when multiple outputs are possible. |
+| `src/toolkit/brain/providers.py` | Registry of 28 AI providers with URLs, prefixes, request formats, and provider-specific request/reply handling. |
+| `src/toolkit/brain/keys.py` | SQLite-backed key storage with rotation, self-healing, model discovery, and per-company limits. |
+| `src/toolkit/brain/http.py` | Shared HTTP utilities for model listing, key probing, and AI calls with graceful fallback between providers. |
+| `src/toolkit/brain/agent.py` | Main 8-step reasoning loop: direct matchers, structured model call, tool execution, feedback loop, and final verification before returning a result. |
 
-### 3. Tooling Layer
-The project exposes a structured tool interface for common actions.
+---
 
-| Module | Role |
+## 3) Adapters
+
+Adapters isolate external systems from the brain. The brain stays ignorant of where data comes from.
+
+| File | Summary |
 | --- | --- |
-| `src/toolkit/tools/registry.py` | Loads tools and resolves direct-match execution routes. |
-| `src/toolkit/tools/data.py` | Contains the first set of operational tools such as counting, grouping, describing, and trend analysis. |
+| `src/toolkit/adapters/base.py` | Core interfaces for `TabData`, selection objects, and adapter protocols such as `SheetAdapter`, `MailAdapter`, and `CalendarAdapter`. |
+| `src/toolkit/adapters/registry.py` | Chooses the active adapter, caches it, and supports test resets. |
+| `src/toolkit/adapters/sheets/csv_folder.py` | Reference adapter for a folder of CSV files. Handles atomic writes, safe tab naming, and normalization of null cells to empty strings. |
 
 ---
 
-## Business Readiness
+## 4) Tools
 
-### Working today
-- Spreadsheet inspection and description
-- Counting rows and grouping by columns
-- Simple trend and outlier analysis
-- Key management and provider detection
-- Direct tool execution without model dependency
-- Hallucination checks and answer validation
+The tool layer provides direct operations that can be triggered by regex matching or by the model when needed.
 
-### Not yet complete
-- Mail and calendar integrations
-- More adapters for databases and external sheets
-- Telegram and web server integration
-- Drawer/UI layer and API surface
-- Expansion into the larger tool library from the original app
+| File | Summary |
+| --- | --- |
+| `src/toolkit/tools/registry.py` | Defines the `Tool` dataclass, loads tools, runs direct matchers, and detects when a tool has refused to answer. |
+| `src/toolkit/tools/data.py` | First set of tools: `describe_sheet`, `count_rows`, `count_rows_in`, `compare_groups`, `find_outliers`, and `trend_over`. |
 
 ---
 
-## Current Risk Profile
+## 5) Config and CLI
 
-### Low-risk areas
-- Core reasoning layer
-- Parsing and analysis functions
-- Adapter normalization conventions
-- Tool packaging patterns
-
-### Medium-risk / active issue
-- AI request flow is still affected by an async/sync mismatch in `call_ai`
-- This is a single known execution blocker and appears localized to the CLI/runtime integration layer
-
-### Strategic note
-The project is not “half-built”; it is already built around the right operating model. The remaining work is expansion and integration rather than re-architecting the core.
+| File | Summary |
+| --- | --- |
+| `src/toolkit/config.py` | Pydantic-based settings loaded from environment and `.env` with sensible defaults. |
+| `src/toolkit/__main__.py` | CLI entry point covering `toolkit ask`, `toolkit keys {list,add,pool,remove,toggle}`, `toolkit tools {list,run}`, `toolkit version`, and a placeholder server command. |
 
 ---
 
-## Delivery Priorities
+## 6) Tests
 
-1. Fix the async call path so all AI-backed flows work reliably.
-2. Finish the adapter expansion beyond CSV.
-3. Add the remaining tool sets and domain-specific profiles.
-4. Expose a server/UI layer for richer workflows.
-5. Keep the brain pure and the adapters thin as the system scales.
-
----
-
-## Key Design Principles
-
-### Principle 1: Pure reasoning
-The brain should not read files, fetch HTTP, or call Google APIs directly.
-
-### Principle 2: Normalized inputs
-- Empty cells become `""`
-- Dates remain strings until parsed
-- Numbers stay strings until parsed
-
-### Principle 3: Verifiable output
-The system is designed to catch invented values, unsupported claims, and weak reasoning before returning a result.
+| File | Tests | What it verifies |
+| --- | ---: | --- |
+| `tests/unit/test_parsing.py` | 32 | Edge cases in number and date parsing from messy spreadsheet values. |
+| `tests/unit/test_analysis.py` | 15 | Outliers, groups, trends, concentration, and shift detection. |
+| `tests/unit/test_verify.py` | 23 | Hallucination guard behavior, including false claims and fabricated entities. |
+| `tests/unit/test_csv_adapter.py` | 20 | CSV contract: atomic writes, empty-string normalization, and path traversal rejection. |
+| `tests/unit/test_tools.py` | 18 | Tool execution, direct matcher behavior, and refusal detection. |
+| `tests/unit/test_keys.py` | 27 | Provider detection, request building, key storage, model scoring, and reply parsing. |
 
 ---
 
-## Verified Command Examples
+## 7) What Works Right Now
 
+### Commands
 ```powershell
-# Describe the data
+# Describe the data (no model, no key needed)
 python -m toolkit ask "what can you see in my sheet?"
 
-# Count and group
+# Count and group (still no model)
 python -m toolkit ask "how many rows are there?"
 python -m toolkit ask "count the rows by Region"
 
@@ -130,14 +99,25 @@ python -m toolkit keys list
 python -m toolkit keys add gsk_...
 python -m toolkit keys pool
 
-# Run tools directly
+# Run any tool directly
 python -m toolkit tools list
 python -m toolkit tools run compare_groups -a tab=Sales -a column=Region
 ```
 
+### Verified
+- Describe-sheet flow
+- Row counting and grouping
+- Key storage and key rotation logic
+- Model discovery and provider prefix detection
+- Honest failure handling
+- Direct matchers that bypass the model entirely
+
+### Known issue this session
+The async/sync mismatch in `call_ai` is the main bug identified in this pass. The fix is linked to an `nest_asyncio.apply()` issue and related dependency setup inside the CLI layer; once corrected, model calls should work consistently.
+
 ---
 
-## Commit Momentum
+## 8) Commit History
 
 ```text
 980b34b  brain: keys.py + http.py — key store, rotation, model discovery
@@ -149,9 +129,41 @@ b7bb9d6  brain: analysis.py (outliers, groups, trends) + adapters/base.py
 47a0f35  brain: parsing.py ported, canary green (32 passed)
 ```
 
-This shows a strong pattern of incremental delivery: each step adds a concrete capability without destabilizing the architecture.
+A CLI-focused commit is still pending.
 
 ---
 
-## Final Takeaway
-The project has already reached a meaningful alpha-state: the core reasoning engine is robust, the tool layer is working, and the architecture is coherent enough to scale. The remaining work is mostly additive rather than foundational, which makes the path to a broader product much more manageable.
+## 9) What Is Still Missing
+
+| Area | Remaining work |
+| --- | --- |
+| Other sheet adapters | SQLite, Postgres, Excel, and Google Sheets implementations as variants of the CSV adapter pattern. |
+| Mail adapter | Gmail integration and a fake adapter for tests. |
+| Calendar adapter | Google Calendar support and a fake implementation. |
+| Telegram | Polling loop and message interface once adapters exist. |
+| HTTP server | FastAPI endpoints matching `google.script.run` behavior, plus WebSocket graph updates. |
+| The Drawer | HTML/CSS/JS port, shim layer, and RPC wiring. |
+| More tools | Remaining tool groups from the original app, likely one file per logical group such as `clean.py`, `think.py`, `make.py`, `mail.py`, `calendar.py`, `contacts.py`, `media.py`, `keys_tools.py`, and `admin.py`. |
+| Domain profiles | `config/domain.json` and preset dictionaries to replace hardcoded branch/urgency/channel vocabulary. |
+
+None of these are hard. Each is a small, isolated addition, and the pattern has already been established.
+
+---
+
+## 10) Core Design Rules
+
+### Rule 1: The brain stays pure
+Nothing in `brain/` performs file reads, makes HTTP calls, or talks to Google. Anything that does I/O belongs in `adapters/` or `tools/`.
+
+### Rule 2: The adapter normalizes, the brain reasons
+- Empty cells are normalized to `""`, never `None`.
+- Dates remain strings until `read_date` interprets them.
+- Numbers remain strings until `read_number` interprets them.
+
+This normalization discipline keeps the reasoning layer stable and makes future adapters easier to plug in safely.
+
+---
+
+## 11) Summary
+
+The project already has a solid foundation: a clean separation between reasoning logic, adapters, and tool execution; strong unit coverage; and a clear path toward adding more integrations and features without disturbing the brain layer.
