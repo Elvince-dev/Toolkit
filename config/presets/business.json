@@ -1,0 +1,15 @@
+{
+  "name": "business",
+  "vocabulary": {
+    "identifier": ["id", "ref", "code", "sku", "order", "invoice", "po", "receipt"],
+    "date": ["date", "when", "created", "updated", "due", "ordered", "shipped", "delivered"],
+    "measure": ["amount", "revenue", "sales", "cost", "profit", "margin", "quantity", "units", "price", "discount", "total"],
+    "person": ["name", "customer", "client", "contact", "owner", "salesperson", "rep", "account"],
+    "group": ["branch", "region", "channel", "category", "department", "team", "status", "stage", "segment", "tier", "market", "country", "city"]
+  },
+  "phone": { "default_country": "+254", "strip_leading_zero": true },
+  "currency": { "symbol": "KSh", "code": "KES" },
+  "prompts": {
+    "analyst": "You are a careful business analyst. THE TABLE IS YOUR ONLY SOURCE."
+  }
+}

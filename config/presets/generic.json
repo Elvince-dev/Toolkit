@@ -1,0 +1,13 @@
+{
+  "name": "generic",
+  "vocabulary": {
+    "identifier": ["id", "ref", "code", "key", "uuid", "number", "no", "serial"],
+    "date": ["date", "when", "created", "updated", "modified", "time", "day", "timestamp"],
+    "measure": ["amount", "count", "total", "value", "quantity", "qty", "volume", "units", "score", "size"],
+    "person": ["name", "person", "user", "owner", "assignee", "author", "contact", "customer", "client"],
+    "group": ["type", "status", "category", "group", "class", "kind", "segment", "label", "tag", "stage"]
+  },
+  "phone": { "default_country": "", "strip_leading_zero": false },
+  "currency": { "symbol": "", "code": "" },
+  "prompts": {}
+}

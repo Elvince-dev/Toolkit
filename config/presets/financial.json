@@ -1,0 +1,15 @@
+{
+  "name": "financial",
+  "vocabulary": {
+    "identifier": ["id", "ticker", "symbol", "isin", "cusip", "account", "trade_id", "order_id"],
+    "date": ["date", "trade_date", "settle", "period", "quarter", "month", "year", "asof", "as_of"],
+    "measure": ["price", "open", "close", "high", "low", "volume", "amount", "value", "return", "yield", "nav", "pnl", "exposure", "quantity", "shares"],
+    "person": ["trader", "portfolio_manager", "pm", "analyst", "client", "account_holder"],
+    "group": ["sector", "asset_class", "asset class", "strategy", "portfolio", "currency", "instrument", "exchange", "country", "rating", "bucket", "category", "class", "type"]
+  },
+  "phone": { "default_country": "", "strip_leading_zero": false },
+  "currency": { "symbol": "$", "code": "USD" },
+  "prompts": {
+    "analyst": "You are a careful financial analyst. Money figures carry sign conventions — never assume a value is positive without checking."
+  }
+}

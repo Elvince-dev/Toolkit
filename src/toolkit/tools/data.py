@@ -9,6 +9,8 @@ string out). What changed:
     rather than reading columns themselves.
   * Every one of them returns a human sentence. Never a dict, never
     a JSON blob. The agent loop expects prose it can quote.
+  * Column guessing uses the active domain profile (brain/domain.py)
+    instead of hardcoded word lists.
 """
 
 from __future__ import annotations
@@ -40,11 +42,8 @@ def _describe_sheet(_: dict[str, Any]) -> str:
     """What tabs exist, how big they are, what columns they hold.
 
     Reads every tab in full to get a true row count, then shows
-    headers. This is the tool someone runs first, so the counts must
-    be exact — "5 rows" when the tab has 8 is a lie.
-
-    Column names are shown in full up to the first six, then a count
-    of the remainder. No mid-word truncation.
+    headers. Column names are shown in full up to the first six,
+    then a count of the remainder.
     """
     adapter = sheet()
     tabs = adapter.list_tabs()
@@ -54,7 +53,6 @@ def _describe_sheet(_: dict[str, Any]) -> str:
     lines = [f"{len(tabs)} tab{'s' if len(tabs) != 1 else ''}:"]
     for name in tabs:
         try:
-            # Sample 1 million — the whole file, for an exact count.
             tab = adapter.read_tab(name, sample=1_000_000)
         except Exception as exc:
             lines.append(f"  · {name}: could not read ({exc})")
@@ -82,8 +80,6 @@ def _count_rows(_: dict[str, Any]) -> str:
     lines = []
     for name in tabs:
         try:
-            # A high sample cap gets the true count without loading
-            # the whole file twice.
             tab = adapter.read_tab(name, sample=1_000_000)
         except Exception as exc:
             lines.append(f"  · {name}: could not read ({exc})")
@@ -281,43 +277,60 @@ def _get_tab(args: dict[str, Any]):
 
 
 def _guess_group_column(headers: list[str]) -> str | None:
-    """A column that looks like a category."""
-    hints = (
-        "region", "category", "type", "status", "group", "class",
-        "branch", "department", "team", "segment", "kind", "stage",
-        "channel", "source", "priority",
-    )
+    """A column that looks like a category, using the active domain."""
+    from toolkit.brain.domain import domain
+
     for h in headers:
-        hl = h.lower()
-        for hint in hints:
-            if hint in hl:
-                return h
-    # Fall back to the first text-looking header
+        if domain().matches("group", h):
+            return h
+    # Fall back to the first header — better than nothing
     return headers[0] if headers else None
 
 
 def _guess_numeric_column(tab) -> str | None:
-    """A column where most cells parse as numbers."""
+    """A column where most cells parse as numbers.
+
+    The domain tells us what typically holds numbers (amount, price,
+    count), but we always trust the data over the vocabulary: if the
+    column named "amount" turns out to hold text, we skip it.
+    """
+    from toolkit.brain.domain import domain
+
+    # First pass: prefer columns whose names match the domain
+    for h in tab.headers:
+        if not domain().matches("measure", h):
+            continue
+        values = tab.column(h)
+        nums = sum(1 for v in values if read_number(v) is not None)
+        if values and nums >= len(values) * 0.7:
+            return h
+
+    # Second pass: any column that holds mostly numbers
     for h in tab.headers:
         values = tab.column(h)
         nums = sum(1 for v in values if read_number(v) is not None)
         if values and nums >= len(values) * 0.7:
             return h
+
     return None
 
 
 def _guess_date_column(tab) -> str | None:
-    """A column where most cells parse as dates."""
-    hints = ("date", "when", "created", "updated", "time", "day")
+    """A column that looks like a date, using the active domain."""
+    from toolkit.brain.domain import domain
+
+    # First pass: name-based guess
     for h in tab.headers:
-        if any(hint in h.lower() for hint in hints):
+        if domain().matches("date", h):
             return h
-    # Fall back to sniffing the values
+
+    # Second pass: value-based sniffing
     for h in tab.headers:
         values = tab.column(h)
         dates = sum(1 for v in values if read_date(v) is not None)
         if values and dates >= len(values) * 0.7:
             return h
+
     return None
 
 

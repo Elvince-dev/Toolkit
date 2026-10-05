@@ -1,0 +1,15 @@
+{
+  "name": "research",
+  "vocabulary": {
+    "identifier": ["id", "sample", "subject", "specimen", "participant", "case", "record"],
+    "date": ["date", "collected", "measured", "recorded", "enrolled", "visit", "session"],
+    "measure": ["value", "reading", "concentration", "mass", "volume", "count", "score", "rate", "level", "dose", "duration"],
+    "person": ["researcher", "operator", "investigator", "clinician", "author"],
+    "group": ["condition", "treatment", "group", "cohort", "site", "batch", "arm", "sex", "gender", "age_group", "category"]
+  },
+  "phone": { "default_country": "", "strip_leading_zero": false },
+  "currency": { "symbol": "", "code": "" },
+  "prompts": {
+    "analyst": "You are a careful research analyst. Report effect sizes and sample sizes. Never overstate a finding."
+  }
+}
