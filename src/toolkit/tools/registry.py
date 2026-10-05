@@ -364,16 +364,17 @@ def _find_tab(text: str) -> str:
 def _find_column(text: str) -> str:
     """Extract a likely column name from a request.
 
-    Recognises 'column Amount', 'Amount column', and 'by Amount'.
-    Returns "" if nothing obvious.
+    Returns the raw word, case-insensitive. The tool that receives
+    it resolves against the actual headers, so "by site", "by Site",
+    and "by SITE" all work.
     """
-    m = re.search(r"\bcolumn\s+([A-Z][\w .\-]{1,30})", text)
+    m = re.search(r"\bcolumn\s+([A-Za-z][\w .\-]{1,30})", text)
     if m:
         return m.group(1).strip()
-    m = re.search(r"\b([A-Z][\w .\-]{1,30})\s+column\b", text)
+    m = re.search(r"\b([A-Za-z][\w .\-]{1,30})\s+column\b", text)
     if m:
         return m.group(1).strip()
-    m = re.search(r"\bby\s+([A-Z][\w .\-]{1,30})", text)
+    m = re.search(r"\bby\s+([A-Za-z][\w .\-]{1,30})", text)
     if m:
         return m.group(1).strip()
     return ""
