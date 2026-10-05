@@ -127,7 +127,14 @@ def _compare_groups(args: dict[str, Any]) -> str:
     if err:
         return err
 
-    column = str(args.get("column") or "").strip()
+    wanted_col = str(args.get("column") or "").strip()
+
+    # If a column was named and the current tab does not have it,
+    # try the other tabs. This is what makes "count the rows by site"
+    # find Trials even when the default tab is something else.
+    tab = _hop_to_tab_with_column(tab, wanted_col)
+
+    column = _resolve_column(tab, wanted_col)
     if not column:
         guess = _guess_group_column(tab.headers)
         if not guess:
@@ -139,6 +146,8 @@ def _compare_groups(args: dict[str, Any]) -> str:
         column = guess
 
     value_column = str(args.get("value") or "").strip() or None
+    if value_column:
+        value_column = _resolve_column(tab, value_column) or value_column
 
     try:
         report = compare_groups(tab, column, value_column)
@@ -180,7 +189,10 @@ def _find_outliers(args: dict[str, Any]) -> str:
     if err:
         return err
 
-    column = str(args.get("column") or "").strip()
+    wanted_col = str(args.get("column") or "").strip()
+    tab = _hop_to_tab_with_column(tab, wanted_col)
+
+    column = _resolve_column(tab, wanted_col)
     if not column:
         guess = _guess_numeric_column(tab)
         if not guess:
@@ -229,9 +241,16 @@ def _trend_over(args: dict[str, Any]) -> str:
     if err:
         return err
 
-    date_col = str(args.get("date_column") or args.get("date") or "").strip()
-    value_col = str(args.get("value_column") or args.get("value") or "").strip() or None
+    wanted_date = str(
+        args.get("date_column") or args.get("date") or ""
+    ).strip()
+    wanted_value = str(
+        args.get("value_column") or args.get("value") or ""
+    ).strip() or None
 
+    tab = _hop_to_tab_with_column(tab, wanted_date)
+
+    date_col = _resolve_column(tab, wanted_date)
     if not date_col:
         guess = _guess_date_column(tab)
         if not guess:
@@ -241,12 +260,60 @@ def _trend_over(args: dict[str, Any]) -> str:
             )
         date_col = guess
 
+    if wanted_value:
+        wanted_value = _resolve_column(tab, wanted_value) or wanted_value
+
     try:
-        report = trend_over(tab, date_col, value_col)
+        report = trend_over(tab, date_col, wanted_value)
     except (KeyError, ValueError) as exc:
         return str(exc)
 
     return report.note
+
+
+def _summarise_column(args: dict[str, Any]) -> str:
+    """Sum, average, min, max, and count for a numeric column.
+
+    Use this when the user asks for the average, total, sum, min, or
+    max of a measure. It computes them all at once because a person
+    asking about the "average" almost always wants the range too.
+    """
+    tab, err = _get_tab(args)
+    if err:
+        return err
+
+    wanted_col = str(args.get("column") or "").strip()
+    tab = _hop_to_tab_with_column(tab, wanted_col)
+
+    column = _resolve_column(tab, wanted_col)
+    if not column:
+        column = _guess_numeric_column(tab)
+    if not column:
+        return (
+            f"I could not find a numeric column to summarise in "
+            f"{tab.name!r}. Columns: {', '.join(tab.headers[:10])}"
+        )
+
+    values = tab.column(column)
+    nums: list[float] = []
+    for v in values:
+        n = read_number(v)
+        if n is not None:
+            nums.append(n)
+
+    if not nums:
+        return f"{column!r} in {tab.name!r} has no numbers to summarise."
+
+    total = sum(nums)
+    avg = total / len(nums)
+    return (
+        f"{column!r} in {tab.name!r}:\n"
+        f"  count: {len(nums)}\n"
+        f"  sum: {total:g}\n"
+        f"  average: {avg:g}\n"
+        f"  min: {min(nums):g}\n"
+        f"  max: {max(nums):g}"
+    )
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -274,6 +341,52 @@ def _get_tab(args: dict[str, Any]):
         )
     except Exception as exc:
         return None, f"I could not read {name!r}: {exc}"
+
+
+def _resolve_column(tab, wanted: str) -> str:
+    """Find the actual header that best matches `wanted`.
+
+    Handles case, spaces vs underscores, and substring matches.
+    Returns "" if nothing plausible.
+    """
+    if not wanted:
+        return ""
+    w = wanted.strip().lower().replace("_", " ").replace("-", " ")
+    # Exact match first
+    for h in tab.headers:
+        if h.strip().lower().replace("_", " ") == w:
+            return h
+    # Substring, either direction
+    for h in tab.headers:
+        hl = h.strip().lower().replace("_", " ")
+        if w in hl or hl in w:
+            return h
+    return ""
+
+
+def _hop_to_tab_with_column(tab, wanted_col: str):
+    """If `wanted_col` is named and not in this tab, try other tabs.
+
+    Only used when the caller did NOT explicitly name a tab. If they
+    did name a tab, we respect their choice even if the column is
+    missing — that is a real error worth reporting.
+    """
+    if not wanted_col:
+        return tab
+    if _resolve_column(tab, wanted_col):
+        return tab
+
+    adapter = sheet()
+    for name in adapter.list_tabs():
+        if name == tab.name:
+            continue
+        try:
+            other = adapter.read_tab(name, sample=5000)
+        except Exception:
+            continue
+        if _resolve_column(other, wanted_col):
+            return other
+    return tab
 
 
 def _guess_group_column(headers: list[str]) -> str | None:
@@ -376,4 +489,11 @@ register(Tool(
     what="see whether something is rising or falling",
     need=(),
     run=_trend_over,
+))
+
+register(Tool(
+    name="summarise_column",
+    what="sum, average, min, max for a numeric column",
+    need=(),
+    run=_summarise_column,
 ))

@@ -110,10 +110,30 @@ class Matcher:
 
 # Rules are tried in order. The first one that matches wins.
 # Deliberately conservative: a wrong match is worse than no match.
+#
+# Order matters:
+#   1. summarise_column first — "how much", "total", "average" are
+#      specific and would otherwise be swallowed by count/group rules.
+#   2. compare_groups_by before count_rows — "count the rows by X"
+#      matches both, and the more specific one should win.
+#   3. count_rows — the general "how many rows" case.
+#   4. describe — shape questions.
+#   5. outliers, groups — specialised analytics.
+#   6. undo and snapshot — always last, so a word like "restore" in
+#      a broader sentence does not hijack the whole request.
 MATCHERS: list[Matcher] = [
-    # Group-by comes first because "count the rows by Region" also
-    # matches the count_rows rule, and we want the more specific one
-    # to win.
+    Matcher(
+        name="summarise_column",
+        test=lambda t: bool(re.search(
+            r"\b(average|mean|sum|total|how much|max|maximum|"
+            r"min|minimum|highest|lowest)\b.{0,40}\b(of|for|in)\b",
+            t, re.I)),
+        tool="summarise_column",
+        args=lambda t: {
+            "tab": _find_tab(t),
+            "column": _find_column(t),
+        },
+    ),
     Matcher(
         name="compare_groups_by",
         test=lambda t: bool(re.search(
@@ -175,7 +195,7 @@ MATCHERS: list[Matcher] = [
             "column": _find_column(t),
         },
     ),
-        Matcher(
+    Matcher(
         name="undo",
         test=lambda t: bool(re.search(
             r"\b(undo|take that back|revert|restore)\b", t, re.I)),
@@ -221,8 +241,6 @@ def run_direct(request: str) -> DirectResult | None:
     if not text:
         return None
 
-    # Validate once per process. If a matcher is broken, this raises
-    # the moment someone asks a question.
     _validate_matchers()
 
     tools = load_tools()
@@ -353,7 +371,7 @@ def _find_tab(text: str) -> str:
     back to their own default (usually the first tab).
     """
     m = re.search(
-        r"\b(?:in|from|of|on|for)\s+(?:the\s+)?[\"']?([A-Z][\w .\-]{1,40})[\"']?",
+        r"\b(?:in|from|of|on|for)\s+(?:the\s+)?[\"']?([A-Za-z][\w .\-]{1,40})[\"']?",
         text,
     )
     if m:
@@ -361,20 +379,34 @@ def _find_tab(text: str) -> str:
     return ""
 
 
+# Prepositions and punctuation that end a column name. Used by
+# _find_column to stop the regex from eating the whole tail of the
+# request.
+_COLUMN_TAIL = (
+    r"([A-Za-z][\w \-]{0,30}?)"
+    r"(?=\s+(?:in|from|of|on|for|where|with|about|to|and|or)\b"
+    r"|[.,;:!?]|$)"
+)
+
+
 def _find_column(text: str) -> str:
     """Extract a likely column name from a request.
 
-    Returns the raw word, case-insensitive. The tool that receives
-    it resolves against the actual headers, so "by site", "by Site",
-    and "by SITE" all work.
+    Returns the raw word, case-insensitive. Stops at the first
+    preposition or punctuation so "by site in Trials" extracts
+    "site", not "site in Trials". The tool that receives the result
+    resolves it against the actual headers.
     """
-    m = re.search(r"\bcolumn\s+([A-Za-z][\w .\-]{1,30})", text)
+    m = re.search(r"\bcolumn\s+" + _COLUMN_TAIL, text, re.I)
     if m:
         return m.group(1).strip()
-    m = re.search(r"\b([A-Za-z][\w .\-]{1,30})\s+column\b", text)
+
+    m = re.search(r"\b" + _COLUMN_TAIL + r"\s+column\b", text, re.I)
     if m:
         return m.group(1).strip()
-    m = re.search(r"\bby\s+([A-Za-z][\w .\-]{1,30})", text)
+
+    m = re.search(r"\bby\s+" + _COLUMN_TAIL, text, re.I)
     if m:
         return m.group(1).strip()
+
     return ""
