@@ -15,6 +15,7 @@ string out). What changed:
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from toolkit.adapters.registry import sheet
@@ -447,6 +448,62 @@ def _guess_date_column(tab) -> str | None:
 
     return None
 
+def _count_distinct(args: dict[str, Any]) -> str:
+    """How many different values appear in a column.
+
+    This is the answer to "how many unique X". `count_rows` counts
+    rows; if one order spans multiple rows, you need this instead.
+    """
+    tab, err = _get_tab(args)
+    if err:
+        return err
+
+    wanted = str(args.get("column") or "").strip()
+    tab = _hop_to_tab_with_column(tab, wanted)
+
+    column = _resolve_column(tab, wanted)
+    if not column:
+        return (
+            f"I could not find a column called {wanted!r} in "
+            f"{tab.name!r}. Columns: {', '.join(tab.headers[:15])}"
+        )
+
+    values = tab.column(column)
+    seen = set()
+    empty = 0
+    for v in values:
+        s = str(v).strip()
+        if not s:
+            empty += 1
+            continue
+        seen.add(s)
+
+    total_rows = len(values)
+    distinct = len(seen)
+    ratio = total_rows / distinct if distinct else 0
+    return (
+        f"{column!r} in {tab.name!r}:\n"
+        f"  rows: {total_rows}\n"
+        f"  distinct values: {distinct}\n"
+        f"  average rows per value: {ratio:.2f}"
+        + (f"\n  empty cells: {empty}" if empty else "")
+    )
+
+def _singular_to_column(text: str) -> str:
+    """Guess the ID column that matches a noun in the request.
+
+    'how many orders'  → 'Order ID'
+    'how many customers' → 'Customer ID'
+    """
+    m = re.search(
+        r"\bhow many (\w+?)(?:s)?\b",
+        text, re.I,
+    )
+    if not m:
+        return ""
+    noun = m.group(1).lower()
+    # Try "Noun ID" (the most common convention)
+    return f"{noun} ID"
 
 # ── register ──────────────────────────────────────────────────────────
 
@@ -497,4 +554,18 @@ register(Tool(
     what="sum, average, min, max for a numeric column",
     need=(),
     run=_summarise_column,
+))
+
+register(Tool(
+    name="count_distinct",
+    what="count how many different values appear in a column",
+    need=("column",),
+    run=_count_distinct
+))
+
+register(Tool(
+    name="singular_to_column",
+    what="guess the ID column that matches a noun in the request",
+    need=("text",),
+    run=lambda args: _singular_to_column(str(args.get("text") or "")),
 ))

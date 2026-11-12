@@ -234,7 +234,6 @@ def test_describe_sheet_shows_every_column(sales):
     for i in range(1, 15):
         assert f"col{i}" in out, f"col{i} was hidden"
 
-
 def test_summarise_column_uses_full_precision(sales):
     tools = tool_registry.load_tools()
     out = tools["summarise_column"].run({
@@ -246,3 +245,37 @@ def test_summarise_column_uses_full_precision(sales):
     assert "," in out
     # Median is reported
     assert "median" in out.lower()
+
+def test_count_distinct_orders(sales):
+    """The Q3 failure: 'how many orders' should count distinct Order IDs."""
+    from toolkit.adapters.registry import sheet
+    adapter = sheet()
+    adapter.write_range("Orders", "A1", [
+        ["Order ID", "Product"],
+        ["A", "apple"],
+        ["A", "banana"],
+        ["B", "cherry"],
+        ["C", "apple"],
+        ["C", "banana"],
+        ["C", "cherry"],
+    ])
+    tools = tool_registry.load_tools()
+    out = tools["count_distinct"].run({
+        "tab": "Orders", "column": "Order ID",
+    })
+    assert "6" in out  # 6 rows
+    assert "3" in out  # 3 distinct order IDs
+
+
+def test_count_distinct_by_colloquial_phrase(sales):
+    from toolkit.adapters.registry import sheet
+    adapter = sheet()
+    adapter.write_range("Orders", "A1", [
+        ["Order ID", "Customer ID", "Amount"],
+        ["A", "C1", "100"],
+        ["A", "C1", "200"],
+        ["B", "C2", "150"],
+    ])
+    result = tool_registry.run_direct("how many orders are there?")
+    assert result is not None
+    assert "3 distinct values" in result.answer or "3\n" in result.answer

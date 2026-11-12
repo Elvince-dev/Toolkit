@@ -156,6 +156,30 @@ MATCHERS: list[Matcher] = [
         args=lambda t: {"tab": _find_tab(t)},
     ),
     Matcher(
+        name="count_distinct",
+        test=lambda t: bool(re.search(
+            r"\b(how many (unique|distinct|different)|"
+            r"count (the )?(unique|distinct)|number of (unique|distinct))\b",
+            t, re.I)),
+        tool="count_distinct",
+        args=lambda t: {
+            "tab": _find_tab(t),
+            "column": _find_column(t),
+        },
+    ),
+    Matcher(
+        name="count_orders_like",
+        test=lambda t: bool(re.search(
+            r"\bhow many (orders|customers|users|products|sales|"
+            r"transactions|invoices|tickets|records)\b",
+            t, re.I)),
+        tool="count_distinct",
+        args=lambda t: {
+            "tab": _find_tab(t),
+            "column": _singular_to_column(t),
+        },
+    ),
+    Matcher(
         name="count_rows",
         test=lambda t: bool(re.search(
             r"\b(how many rows|count (the )?rows|row count|"
@@ -410,3 +434,19 @@ def _find_column(text: str) -> str:
         return m.group(1).strip()
 
     return ""
+
+def _singular_to_column(text: str) -> str:
+    """Guess the ID column that matches a noun in the request.
+
+    'how many orders'    → 'order ID'
+    'how many customers' → 'customer ID'
+
+    Returns "" if no noun is found. The tool that receives it then
+    resolves the name against the actual headers, so 'order ID'
+    fuzzy-matches 'Order ID', 'order_id', or 'Order_ID'.
+    """
+    m = re.search(r"\bhow many (\w+?)s?\b", text, re.I)
+    if not m:
+        return ""
+    noun = m.group(1).lower()
+    return f"{noun} ID"
