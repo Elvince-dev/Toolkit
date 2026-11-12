@@ -123,6 +123,18 @@ class Matcher:
 #      a broader sentence does not hijack the whole request.
 MATCHERS: list[Matcher] = [
     Matcher(
+        name="date_range",
+        test=lambda t: bool(re.search(
+            r"\b(earliest|latest|first and last|date range|"
+            r"span|how long)\b.{0,40}\b(date|order|record|entry)\b",
+            t, re.I)),
+        tool="date_range",
+        args=lambda t: {
+            "tab": _find_tab(t),
+            "column": _find_column(t),
+        },
+    ),
+    Matcher(
         name="summarise_column",
         test=lambda t: bool(re.search(
             r"\b(average|mean|sum|total|how much|max|maximum|"

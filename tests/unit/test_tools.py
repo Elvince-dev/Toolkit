@@ -279,3 +279,9 @@ def test_count_distinct_by_colloquial_phrase(sales):
     result = tool_registry.run_direct("how many orders are there?")
     assert result is not None
     assert "3 distinct values" in result.answer or "3\n" in result.answer
+
+def test_date_range(sales):
+    tools = tool_registry.load_tools()
+    out = tools["date_range"].run({"tab": "Sales", "column": "Date"})
+    assert "2026-01-15" in out
+    assert "2026-01-22" in out

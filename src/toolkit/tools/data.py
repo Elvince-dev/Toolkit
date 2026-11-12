@@ -505,6 +505,44 @@ def _singular_to_column(text: str) -> str:
     # Try "Noun ID" (the most common convention)
     return f"{noun} ID"
 
+def _date_range(args: dict[str, Any]) -> str:
+    """The earliest and latest date in a column, plus the span."""
+    tab, err = _get_tab(args)
+    if err:
+        return err
+
+    wanted = str(args.get("date_column") or args.get("column") or "").strip()
+    tab = _hop_to_tab_with_column(tab, wanted)
+
+    column = _resolve_column(tab, wanted)
+    if not column:
+        column = _guess_date_column(tab)
+    if not column:
+        return (
+            f"I could not find a date column in {tab.name!r}. "
+            f"Columns: {', '.join(tab.headers[:15])}"
+        )
+
+    dates = []
+    for v in tab.column(column):
+        d = read_date(v)
+        if d is not None:
+            dates.append(d)
+
+    if not dates:
+        return f"{column!r} in {tab.name!r} has no dates."
+
+    dates.sort()
+    earliest, latest = dates[0], dates[-1]
+    span_days = (latest - earliest).days
+    return (
+        f"{column!r} in {tab.name!r}:\n"
+        f"  earliest: {earliest.isoformat()}\n"
+        f"  latest: {latest.isoformat()}\n"
+        f"  span: {span_days} days ({span_days // 30} months)\n"
+        f"  dates counted: {len(dates)}"
+    )
+
 # ── register ──────────────────────────────────────────────────────────
 
 register(Tool(
@@ -568,4 +606,11 @@ register(Tool(
     what="guess the ID column that matches a noun in the request",
     need=("text",),
     run=lambda args: _singular_to_column(str(args.get("text") or "")),
+))
+
+register(Tool(
+    name="date_range",
+    what="the earliest and latest date in a column",
+    need=(),
+    run=_date_range,
 ))
