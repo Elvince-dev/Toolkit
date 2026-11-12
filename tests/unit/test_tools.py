@@ -285,3 +285,19 @@ def test_date_range(sales):
     out = tools["date_range"].run({"tab": "Sales", "column": "Date"})
     assert "2026-01-15" in out
     assert "2026-01-22" in out
+
+def test_group_by_month(sales):
+    tools = tool_registry.load_tools()
+    out = tools["group_by_month"].run({
+        "tab": "Sales", "date_column": "Date",
+    })
+    assert "2026-01" in out
+    assert "busiest" in out.lower()
+
+
+def test_group_by_month_sums_a_value(sales):
+    tools = tool_registry.load_tools()
+    out = tools["group_by_month"].run({
+        "tab": "Sales", "date_column": "Date", "value": "Amount",
+    })
+    assert "sum" in out

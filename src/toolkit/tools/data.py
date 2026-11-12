@@ -543,6 +543,77 @@ def _date_range(args: dict[str, Any]) -> str:
         f"  dates counted: {len(dates)}"
     )
 
+def _group_by_month(args: dict[str, Any]) -> str:
+    """Group a tab by calendar month, and optionally sum a value.
+
+    This is the tool for "busiest month", "sales in January", and
+    "month by month". It self-guesses the date column if not given.
+    """
+    tab, err = _get_tab(args)
+    if err:
+        return err
+
+    wanted_date = str(
+        args.get("date_column") or args.get("column") or ""
+    ).strip()
+    wanted_value = str(args.get("value") or "").strip() or None
+
+    tab = _hop_to_tab_with_column(tab, wanted_date)
+
+    date_col = _resolve_column(tab, wanted_date)
+    if not date_col:
+        date_col = _guess_date_column(tab)
+    if not date_col:
+        return (
+            f"I could not find a date column in {tab.name!r}. "
+            f"Columns: {', '.join(tab.headers[:15])}"
+        )
+
+    value_col = None
+    if wanted_value:
+        value_col = _resolve_column(tab, wanted_value) or wanted_value
+
+    counts: dict[str, dict[str, Any]] = {}
+    for row in tab.rows:
+        try:
+            idx = tab.headers.index(date_col)
+        except ValueError:
+            return f"Date column {date_col!r} is not in {tab.name!r}."
+        d = read_date(row[idx] if idx < len(row) else None)
+        if d is None:
+            continue
+        key = d.strftime("%Y-%m")
+        if key not in counts:
+            counts[key] = {"rows": 0, "sum": 0.0, "nums": 0}
+        counts[key]["rows"] += 1
+        if value_col:
+            try:
+                v_idx = tab.headers.index(value_col)
+            except ValueError:
+                continue
+            n = read_number(row[v_idx] if v_idx < len(row) else None)
+            if n is not None:
+                counts[key]["sum"] += n
+                counts[key]["nums"] += 1
+
+    if not counts:
+        return f"{date_col!r} in {tab.name!r} has no parsable dates."
+
+    months = sorted(counts.keys())
+    header = f"{tab.name!r} by month ({date_col!r}):"
+    lines = [header]
+    for m in months:
+        c = counts[m]
+        bit = f"  {m}: {c['rows']} rows"
+        if value_col and c["nums"]:
+            bit += f", sum {c['sum']:,.2f}, avg {c['sum']/c['nums']:,.2f}"
+        lines.append(bit)
+
+    busiest = max(months, key=lambda k: counts[k]["rows"])
+    lines.append(f"\n  Busiest month by row count: {busiest} "
+                 f"({counts[busiest]['rows']} rows)")
+
+    return "\n".join(lines)
 # ── register ──────────────────────────────────────────────────────────
 
 register(Tool(
@@ -613,4 +684,11 @@ register(Tool(
     what="the earliest and latest date in a column",
     need=(),
     run=_date_range,
+))
+
+register(Tool(
+    name="group_by_month",
+    what="group a tab by calendar month, optionally summing a value",
+    need=(),
+    run=_group_by_month,
 ))

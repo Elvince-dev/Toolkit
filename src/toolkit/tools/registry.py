@@ -123,6 +123,20 @@ class Matcher:
 #      a broader sentence does not hijack the whole request.
 MATCHERS: list[Matcher] = [
     Matcher(
+        name="group_by_month",
+        test=lambda t: bool(re.search(
+            r"\b(busiest|quietest|month by month|monthly|"
+            r"by month|in january|in february|in march|in april|"
+            r"in may|in june|in july|in august|in september|"
+            r"in october|in november|in december)\b",
+            t, re.I)),
+        tool="group_by_month",
+        args=lambda t: {
+            "tab": _find_tab(t),
+            "date_column": _find_column(t),
+        },
+    ),
+    Matcher(
         name="date_range",
         test=lambda t: bool(re.search(
             r"\b(earliest|latest|first and last|date range|"
