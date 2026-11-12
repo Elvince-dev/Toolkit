@@ -27,6 +27,7 @@ from toolkit.brain.analysis import (
 )
 from toolkit.brain.parsing import read_date, read_number
 from toolkit.tools.registry import Tool
+from statistics import median as _median
 
 
 TOOLS: dict[str, Tool] = {}
@@ -57,11 +58,9 @@ def _describe_sheet(_: dict[str, Any]) -> str:
         except Exception as exc:
             lines.append(f"  · {name}: could not read ({exc})")
             continue
-        shown = tab.headers[:6]
-        cols = ", ".join(shown) or "(no headers)"
-        remaining = len(tab.headers) - len(shown)
-        if remaining > 0:
-            cols += f", +{remaining} more"
+        # show every column. The model needs to see the whole schema
+        # to know what it can ask about.
+        cols = ", ".join(tab.headers) if tab.headers else "(no headers)"
         lines.append(
             f"  · {name}: {tab.row_count} rows, "
             f"{tab.column_count} columns — {cols}"
@@ -217,8 +216,8 @@ def _find_outliers(args: dict[str, Any]) -> str:
 
     lines = [
         f"Column {column!r} in {tab.name!r}:",
-        f"  {report.counted} numbers, median {report.median:g}, "
-        f"normal range {report.normal_from:g} to {report.normal_to:g}",
+        f"  {report.counted} numbers, median {report.median:,.2f}, "
+        f"normal range {report.normal_from:,.2f} to {report.normal_to:,.2f}",
     ]
 
     if not report.total:
@@ -226,10 +225,10 @@ def _find_outliers(args: dict[str, Any]) -> str:
         return "\n".join(lines)
 
     if report.high:
-        vals = ", ".join(f"row {o.row} ({o.value:g})" for o in report.high[:6])
+        vals = ", ".join(f"row {o.row} ({o.value:,.2f})" for o in report.high[:6])
         lines.append(f"  Unusually high: {vals}")
     if report.low:
-        vals = ", ".join(f"row {o.row} ({o.value:g})" for o in report.low[:6])
+        vals = ", ".join(f"row {o.row} ({o.value:,.2f})" for o in report.low[:6])
         lines.append(f"  Unusually low: {vals}")
 
     return "\n".join(lines)
@@ -306,13 +305,15 @@ def _summarise_column(args: dict[str, Any]) -> str:
 
     total = sum(nums)
     avg = total / len(nums)
+    med = _median(nums)
     return (
         f"{column!r} in {tab.name!r}:\n"
         f"  count: {len(nums)}\n"
-        f"  sum: {total:g}\n"
-        f"  average: {avg:g}\n"
-        f"  min: {min(nums):g}\n"
-        f"  max: {max(nums):g}"
+        f"  sum: {total:,.2f}\n"
+        f"  average: {avg:,.2f}\n"
+        f"  median: {med:,.2f}\n"
+        f"  min: {min(nums):,.2f}\n"
+        f"  max: {max(nums):,.2f}"
     )
 
 
@@ -333,7 +334,7 @@ def _get_tab(args: dict[str, Any]):
         name = tabs[0]
 
     try:
-        return adapter.read_tab(name, sample=5000), None
+        return adapter.read_tab(name, sample=10_000), None
     except FileNotFoundError:
         return None, (
             f"There is no tab called {name!r}. "
@@ -381,7 +382,7 @@ def _hop_to_tab_with_column(tab, wanted_col: str):
         if name == tab.name:
             continue
         try:
-            other = adapter.read_tab(name, sample=5000)
+            other = adapter.read_tab(name, sample=10_000)
         except Exception:
             continue
         if _resolve_column(other, wanted_col):

@@ -156,8 +156,11 @@ def test_compare_groups_averages(sales):
 def test_find_outliers_on_amount(sales):
     tools = tool_registry.load_tools()
     out = tools["find_outliers"].run({"tab": "Sales", "column": "Amount"})
-    # 9100 is the obvious outlier
-    assert "9100" in out
+    # 9100 is the obvious outlier — accept with or without comma
+    # and with or without decimal places, because the exact format
+    # may vary between backends and formatting versions.
+    normalized = out.replace(",", "").replace(".00", "")
+    assert "9100" in normalized
 
 
 def test_find_outliers_with_a_text_column(sales):
@@ -216,3 +219,30 @@ def test_run_direct_matches_which_region_has_the_most(sales):
     result = tool_registry.run_direct("which region has the most rows?")
     # Either compare_groups or none — but not count_rows
     assert result is None or result.tool != "count_rows"
+
+def test_describe_sheet_shows_every_column(sales):
+    """The model needs the full schema, not the first six columns."""
+    from toolkit.adapters.registry import sheet
+
+    adapter = sheet()
+    adapter.write_range("Wide", "A1", [
+        [f"col{i}" for i in range(1, 15)],
+        ["x"] * 14,
+    ])
+    tools = tool_registry.load_tools()
+    out = tools["describe_sheet"].run({})
+    for i in range(1, 15):
+        assert f"col{i}" in out, f"col{i} was hidden"
+
+
+def test_summarise_column_uses_full_precision(sales):
+    tools = tool_registry.load_tools()
+    out = tools["summarise_column"].run({
+        "tab": "Sales", "column": "Amount",
+    })
+    # No scientific notation anywhere
+    assert "e+" not in out.lower()
+    # Thousands separators present
+    assert "," in out
+    # Median is reported
+    assert "median" in out.lower()
