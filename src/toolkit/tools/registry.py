@@ -87,7 +87,7 @@ def load_tools() -> dict[str, Tool]:
     toolkit.tools.registry for the Tool class, but the registry
     builds the dict by importing the tool modules.
     """
-    from toolkit.tools import data, write  # noqa: F401
+    from toolkit.tools import data, mail, write  # noqa: F401
 
     out: dict[str, Tool] = {}
     for module in (data, write):
