@@ -64,7 +64,31 @@ def calendar() -> CalendarAdapter | None:
         return CalDavAdapter()  # type: ignore[return-value]
     return None
 
+_mail_instance = None
 
+def mail():
+    """Return the configured MailAdapter, or None if not set up."""
+    global _mail_instance
+    if _mail_instance is not None:
+        return _mail_instance
+
+    # For now, we always return the real Gmail adapter if a token exists.
+    # Later, this reads from settings.py.
+    from pathlib import Path
+    from toolkit.config import settings
+    
+    token_path = settings().data_dir / "token.json"
+    if not token_path.exists():
+        return None
+
+    try:
+        from toolkit.adapters.mail.gmail import GmailAdapter
+        _mail_instance = GmailAdapter()
+        return _mail_instance
+    except Exception as e:
+        # If auth fails, return None. The tools will say "no mailbox".
+        print(f"Warning: Could not load Gmail adapter: {e}")
+        return None
 def reset() -> None:
     """Clear cached adapters. Tests call this when settings change."""
     sheet.cache_clear()
