@@ -15,6 +15,7 @@ loop; if it is called from sync code, wrap in asyncio.run().
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -28,6 +29,28 @@ from toolkit.brain.providers import (
 )
 from toolkit.brain.keys import Key
 
+def run_sync(coro):
+    """Run an async coroutine from sync code, whether or not a loop
+    is already running.
+
+    The naive `asyncio.run(coro)` raises RuntimeError if a loop is
+    already running. That happens when sync code (keys.add_key,
+    keys.heal_all_keys, the CLI) is called from inside async code
+    (a future OAuth callback, a notebook, a test runner that uses
+    pytest-asyncio). nest_asyncio patches the running loop so the
+    inner coroutine can be awaited; on a clean thread it does
+    nothing and asyncio.run works normally.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop running. The simple path.
+        return asyncio.run(coro)
+
+    # A loop is already running. nest_asyncio lets us re-enter it.
+    import nest_asyncio
+    nest_asyncio.apply(loop)
+    return loop.run_until_complete(coro)
 
 TIMEOUT = 30.0
 
@@ -177,9 +200,7 @@ def _parse_openai_models(
 
 def fetch_model_list(key: Key) -> dict[str, Any]:
     """Blocking wrapper. Used by the synchronous key layer."""
-    import asyncio
-
-    return asyncio.run(fetch_model_list_async(key))
+    return run_sync(fetch_model_list_async(key))
 
 
 # ── probe ─────────────────────────────────────────────────────────────
@@ -261,9 +282,8 @@ def _read_text(shape: str, body: str) -> str:
 
 def probe_key(key: Key) -> dict[str, Any]:
     """Blocking wrapper."""
-    import asyncio
+    return run_sync(probe_key_async(key))
 
-    return asyncio.run(probe_key_async(key))
 
 # ── the chat call the agent uses ──────────────────────────────────────
 
@@ -562,9 +582,7 @@ def call_ai(
     max_tokens: int | None = None,
 ) -> str:
     """Blocking wrapper around call_ai_async. Used by the CLI."""
-    import asyncio
-
-    return asyncio.run(call_ai_async(
+    return run_sync(call_ai_async(
         prompt,
         system=system, turns=turns,
         only_key_id=only_key_id,

@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from toolkit.brain.http import call_ai_async
+from toolkit.brain.http import call_ai_async, run_sync
 from toolkit.brain.presentation import present_direct_answer
 from toolkit.brain.verify import (
     check_claims,
@@ -227,7 +227,7 @@ async def run_agent(
 
 def run_agent_sync(request: str, **kwargs: Any) -> AgentResult:
     """Blocking wrapper for the CLI."""
-    return asyncio.run(run_agent(request, **kwargs))
+    return run_sync(run_agent(request, **kwargs))
 
 
 # ── internals ─────────────────────────────────────────────────────────
