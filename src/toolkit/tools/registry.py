@@ -201,6 +201,7 @@ MATCHERS: list[Matcher] = [
             "tab": _find_tab(t),
             "column": _find_column(t) or _singular_to_column(t),
         },
+        soft=True,
     ),
     Matcher(
         name="count_orders_like",
@@ -213,6 +214,7 @@ MATCHERS: list[Matcher] = [
             "tab": _find_tab(t),
             "column": _singular_to_column(t),
         },
+        soft=True,
     ),
     Matcher(
         name="count_rows",
