@@ -90,7 +90,7 @@ def load_tools() -> dict[str, Tool]:
     from toolkit.tools import data, mail, write  # noqa: F401
 
     out: dict[str, Tool] = {}
-    for module in (data, write):
+    for module in (data, mail,write):
         for name, tool in getattr(module, "TOOLS", {}).items():
             if name in out:
                 raise RuntimeError(
@@ -246,9 +246,12 @@ MATCHERS: list[Matcher] = [
     Matcher(
         name="describe",
         test=lambda t: bool(re.search(
-            r"\b(what can you see|describe|what'?s in|what is in|"
+            r"\b(what can you see|describe (the |this )?(sheet|data|tab)|"
+            r"what'?s in (the |this )?(sheet|tab|data)|"
+            r"what is in (the |this )?(sheet|tab|data)|"
             r"show me (the )?sheet|what tabs|list (the )?tabs|"
-            r"what columns)\b", t, re.I)),
+            r"what columns)\b",
+            t, re.I)),
         tool="describe_sheet",
         args=lambda t: {},
     ),
@@ -274,6 +277,63 @@ MATCHERS: list[Matcher] = [
             "tab": _find_tab(t),
             "column": _find_column(t),
         },
+    ),
+    Matcher(
+        name="read_inbox",
+        test=lambda t: bool(re.search(
+            r"\b(inbox|unread|new emails|check (my )?mail|"
+            r"read (my )?mail|any new (mail|messages)|what'?s unread)\b",
+            t, re.I)),
+        tool="read_inbox",
+        args=lambda t: {},
+    ),
+    Matcher(
+        name="archive_thread",
+        test=lambda t: bool(re.search(
+            r"\barchive\b.{0,30}\b(email|thread|message)\b|"
+            r"\b(email|thread|message)\b.{0,30}\barchive\b",
+            t, re.I)),
+        tool="archive_thread",
+        args=lambda t: {
+            # Grab the token after 'email' or 'thread' — real Gmail IDs
+            # are hex, fake IDs are 'thd_1', both work with \w+.
+            "thread_id": (
+                (m := re.search(
+                    r"\b(?:email|thread|message)\s+([A-Za-z0-9_\-]{3,})",
+                    t, re.I))
+                and m.group(1) or ""
+            ),
+        },
+        soft=True,
+    ),
+    Matcher(
+        name="search_mail",
+        test=lambda t: bool(re.search(
+            r"\b(search|find|look for|do i have)\b.{0,30}\b(emails?|mail|messages?)\b",
+            t, re.I)),
+        tool="search_mail",
+        args=lambda t: {
+            "query": (
+                (m := re.search(r"\b(?:for|about)\s+(.+)$", t, re.I))
+                and m.group(1).strip() or t.strip()
+            ),
+        },
+    ),
+    Matcher(
+        name="send_email",
+        test=lambda t: bool(re.search(
+            r"\b(send|write|draft)\b.{0,30}\b(email|mail|message)\b.{0,30}\bto\b",
+            t, re.I)),
+        tool="send_email",
+        args=lambda t: {
+            "to": (
+                (m := re.search(r"\bto\s+([^\s,;]+@[^\s,;]+)", t, re.I))
+                and m.group(1) or ""
+            ),
+            "subject": "",
+            "body": "",
+        },
+        soft=True,
     ),
     Matcher(
         name="undo",
