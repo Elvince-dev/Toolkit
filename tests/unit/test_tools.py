@@ -278,7 +278,7 @@ def test_run_direct_describes_available_tools_without_inspecting_sheet(sales):
     )
     assert result is not None
     assert result.tool == "tool_catalog"
-    assert "17 tools" in result.answer
+    assert "21 tools" in result.answer
     assert "summarise numeric columns" in result.answer.lower()
 
 
