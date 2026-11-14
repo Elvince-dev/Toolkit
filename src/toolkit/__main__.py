@@ -14,9 +14,11 @@ import asyncio
 import sys
 from typing import Annotated
 
+import nest_asyncio
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from toolkit import __version__
 from toolkit.brain.agent import run_agent_sync
@@ -30,7 +32,6 @@ from toolkit.brain.keys import (
 )
 from toolkit.tools.registry import load_tools
 
-import nest_asyncio
 nest_asyncio.apply()
 
 
@@ -52,6 +53,8 @@ def ask(
     question: Annotated[str, typer.Argument(help="The question to ask")],
     quiet: Annotated[bool, typer.Option("--quiet", "-q",
         help="Only print the answer, no decoration")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v",
+        help="Show the tool steps used to answer")] = False,
 ) -> None:
     """Ask the agent a question about your data."""
     result = run_agent_sync(question, source="cli")
@@ -65,22 +68,30 @@ def ask(
             raise typer.Exit(1)
         return
 
-    console.print()
     if result.answer:
-        console.print(result.answer)
+        console.print(Text(result.answer))
     elif result.why:
-        console.print(f"[red]{result.why}[/red]")
+        console.print(Text(result.why, style="red"))
 
-    if result.trail:
-        console.print()
-        console.print("[dim]─── steps ───[/dim]")
+    if verbose and result.trail:
+        steps = Table("Step", "Tool", "Result", title="Steps", expand=True)
         for step in result.trail:
             tool = step.get("tool") or step.get("note") or "?"
-            result_text = str(step.get("result") or "")[:80]
-            console.print(f"  [dim]{step.get('step', '?')}.[/dim] {tool}  {result_text}")
+            result_text = " ".join(
+                str(step.get("result") or step.get("note") or "").split()
+            )[:160]
+            steps.add_row(
+                Text(str(step.get("step", "?"))),
+                Text(str(tool)),
+                Text(result_text),
+            )
+        console.print(steps)
 
     console.print()
-    console.print(f"[dim]{result.seconds:.2f}s · {result.steps} steps[/dim]")
+    step_label = "step" if result.steps == 1 else "steps"
+    console.print(
+        f"[dim]{result.seconds:.2f}s ({result.steps} {step_label})[/dim]"
+    )
 
 
 # ── keys ──────────────────────────────────────────────────────────────

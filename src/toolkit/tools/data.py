@@ -15,7 +15,8 @@ string out). What changed:
 
 from __future__ import annotations
 
-import re
+from calendar import month_name
+from statistics import median as _median
 from typing import Any
 
 from toolkit.adapters.registry import sheet
@@ -28,8 +29,6 @@ from toolkit.brain.analysis import (
 )
 from toolkit.brain.parsing import read_date, read_number
 from toolkit.tools.registry import Tool
-from statistics import median as _median
-
 
 TOOLS: dict[str, Tool] = {}
 
@@ -132,10 +131,12 @@ def _compare_groups(args: dict[str, Any]) -> str:
     # If a column was named and the current tab does not have it,
     # try the other tabs. This is what makes "count the rows by site"
     # find Trials even when the default tab is something else.
-    tab = _hop_to_tab_with_column(tab, wanted_col)
+    tab = _hop_to_tab_with_column(tab, wanted_col, explicit=bool(args.get("tab")))
 
     column = _resolve_column(tab, wanted_col)
     if not column:
+        if wanted_col:
+            return f"I could not find a column called {wanted_col!r} in {tab.name!r}."
         guess = _guess_group_column(tab.headers)
         if not guess:
             return (
@@ -190,10 +191,12 @@ def _find_outliers(args: dict[str, Any]) -> str:
         return err
 
     wanted_col = str(args.get("column") or "").strip()
-    tab = _hop_to_tab_with_column(tab, wanted_col)
+    tab = _hop_to_tab_with_column(tab, wanted_col, explicit=bool(args.get("tab")))
 
     column = _resolve_column(tab, wanted_col)
     if not column:
+        if wanted_col:
+            return f"I could not find a column called {wanted_col!r} in {tab.name!r}."
         guess = _guess_numeric_column(tab)
         if not guess:
             return (
@@ -248,10 +251,12 @@ def _trend_over(args: dict[str, Any]) -> str:
         args.get("value_column") or args.get("value") or ""
     ).strip() or None
 
-    tab = _hop_to_tab_with_column(tab, wanted_date)
+    tab = _hop_to_tab_with_column(tab, wanted_date, explicit=bool(args.get("tab")))
 
     date_col = _resolve_column(tab, wanted_date)
     if not date_col:
+        if wanted_date:
+            return f"I could not find a date column called {wanted_date!r} in {tab.name!r}."
         guess = _guess_date_column(tab)
         if not guess:
             return (
@@ -283,10 +288,12 @@ def _summarise_column(args: dict[str, Any]) -> str:
         return err
 
     wanted_col = str(args.get("column") or "").strip()
-    tab = _hop_to_tab_with_column(tab, wanted_col)
+    tab = _hop_to_tab_with_column(tab, wanted_col, explicit=bool(args.get("tab")))
 
     column = _resolve_column(tab, wanted_col)
     if not column:
+        if wanted_col:
+            return f"I could not find a column called {wanted_col!r} in {tab.name!r}."
         column = _guess_numeric_column(tab)
     if not column:
         return (
@@ -366,14 +373,16 @@ def _resolve_column(tab, wanted: str) -> str:
     return ""
 
 
-def _hop_to_tab_with_column(tab, wanted_col: str):
+def _hop_to_tab_with_column(
+    tab, wanted_col: str, *, explicit: bool = False
+):
     """If `wanted_col` is named and not in this tab, try other tabs.
 
     Only used when the caller did NOT explicitly name a tab. If they
     did name a tab, we respect their choice even if the column is
     missing — that is a real error worth reporting.
     """
-    if not wanted_col:
+    if explicit or not wanted_col:
         return tab
     if _resolve_column(tab, wanted_col):
         return tab
@@ -398,8 +407,7 @@ def _guess_group_column(headers: list[str]) -> str | None:
     for h in headers:
         if domain().matches("group", h):
             return h
-    # Fall back to the first header — better than nothing
-    return headers[0] if headers else None
+    return None
 
 
 def _guess_numeric_column(tab) -> str | None:
@@ -459,7 +467,7 @@ def _count_distinct(args: dict[str, Any]) -> str:
         return err
 
     wanted = str(args.get("column") or "").strip()
-    tab = _hop_to_tab_with_column(tab, wanted)
+    tab = _hop_to_tab_with_column(tab, wanted, explicit=bool(args.get("tab")))
 
     column = _resolve_column(tab, wanted)
     if not column:
@@ -483,27 +491,11 @@ def _count_distinct(args: dict[str, Any]) -> str:
     ratio = total_rows / distinct if distinct else 0
     return (
         f"{column!r} in {tab.name!r}:\n"
-        f"  rows: {total_rows}\n"
         f"  distinct values: {distinct}\n"
+        f"  rows: {total_rows}\n"
         f"  average rows per value: {ratio:.2f}"
         + (f"\n  empty cells: {empty}" if empty else "")
     )
-
-def _singular_to_column(text: str) -> str:
-    """Guess the ID column that matches a noun in the request.
-
-    'how many orders'  → 'Order ID'
-    'how many customers' → 'Customer ID'
-    """
-    m = re.search(
-        r"\bhow many (\w+?)(?:s)?\b",
-        text, re.I,
-    )
-    if not m:
-        return ""
-    noun = m.group(1).lower()
-    # Try "Noun ID" (the most common convention)
-    return f"{noun} ID"
 
 def _date_range(args: dict[str, Any]) -> str:
     """The earliest and latest date in a column, plus the span."""
@@ -512,10 +504,12 @@ def _date_range(args: dict[str, Any]) -> str:
         return err
 
     wanted = str(args.get("date_column") or args.get("column") or "").strip()
-    tab = _hop_to_tab_with_column(tab, wanted)
+    tab = _hop_to_tab_with_column(tab, wanted, explicit=bool(args.get("tab")))
 
     column = _resolve_column(tab, wanted)
     if not column:
+        if wanted:
+            return f"I could not find a date column called {wanted!r} in {tab.name!r}."
         column = _guess_date_column(tab)
     if not column:
         return (
@@ -540,13 +534,13 @@ def _date_range(args: dict[str, Any]) -> str:
         f"  earliest: {earliest.isoformat()}\n"
         f"  latest: {latest.isoformat()}\n"
         f"  span: {span_days} days ({span_days // 30} months)\n"
-        f"  dates counted: {len(dates)}"
+        f"  valid dates counted (rows): {len(dates)}"
     )
 
 def _group_by_month(args: dict[str, Any]) -> str:
-    """Group a tab by calendar month, and optionally sum a value.
+    """Group a tab by calendar month, optionally filtering or counting IDs.
 
-    This is the tool for "busiest month", "sales in January", and
+    This is the tool for "busiest month", "orders in January", and
     "month by month". It self-guesses the date column if not given.
     """
     tab, err = _get_tab(args)
@@ -557,11 +551,43 @@ def _group_by_month(args: dict[str, Any]) -> str:
         args.get("date_column") or args.get("column") or ""
     ).strip()
     wanted_value = str(args.get("value") or "").strip() or None
+    wanted_distinct = str(args.get("distinct_column") or "").strip()
+    month_value = args.get("month")
+    year_value = args.get("year")
 
-    tab = _hop_to_tab_with_column(tab, wanted_date)
+    month_number = None
+    if month_value not in (None, ""):
+        if isinstance(month_value, str) and not month_value.isdigit():
+            month_number = next(
+                (
+                    number for number in range(1, 13)
+                    if month_name[number].lower() == month_value.strip().lower()
+                ),
+                None,
+            )
+        else:
+            try:
+                month_number = int(month_value)
+            except (TypeError, ValueError):
+                return f"I could not understand the month {month_value!r}."
+        if month_number is None or not 1 <= month_number <= 12:
+            return f"I could not understand the month {month_value!r}."
+
+    year_number = None
+    if year_value not in (None, ""):
+        try:
+            year_number = int(year_value)
+        except (TypeError, ValueError):
+            return f"I could not understand the year {year_value!r}."
+
+    tab = _hop_to_tab_with_column(
+        tab, wanted_date, explicit=bool(args.get("tab"))
+    )
 
     date_col = _resolve_column(tab, wanted_date)
     if not date_col:
+        if wanted_date:
+            return f"I could not find a date column called {wanted_date!r} in {tab.name!r}."
         date_col = _guess_date_column(tab)
     if not date_col:
         return (
@@ -571,35 +597,100 @@ def _group_by_month(args: dict[str, Any]) -> str:
 
     value_col = None
     if wanted_value:
-        value_col = _resolve_column(tab, wanted_value) or wanted_value
+        value_col = _resolve_column(tab, wanted_value)
+        if not value_col:
+            return f"I could not find a column called {wanted_value!r} in {tab.name!r}."
 
+    distinct_col = None
+    if wanted_distinct:
+        distinct_col = _resolve_column(tab, wanted_distinct)
+        if not distinct_col:
+            return (
+                f"I could not find a column called {wanted_distinct!r} "
+                f"in {tab.name!r}."
+            )
+
+    date_idx = tab.headers.index(date_col)
+    value_idx = tab.headers.index(value_col) if value_col else None
+    distinct_idx = tab.headers.index(distinct_col) if distinct_col else None
     counts: dict[str, dict[str, Any]] = {}
     for row in tab.rows:
-        try:
-            idx = tab.headers.index(date_col)
-        except ValueError:
-            return f"Date column {date_col!r} is not in {tab.name!r}."
-        d = read_date(row[idx] if idx < len(row) else None)
+        d = read_date(row[date_idx] if date_idx < len(row) else None)
         if d is None:
+            continue
+        if month_number is not None and d.month != month_number:
+            continue
+        if year_number is not None and d.year != year_number:
             continue
         key = d.strftime("%Y-%m")
         if key not in counts:
-            counts[key] = {"rows": 0, "sum": 0.0, "nums": 0}
+            counts[key] = {
+                "rows": 0, "sum": 0.0, "nums": 0, "distinct": set(),
+            }
         counts[key]["rows"] += 1
-        if value_col:
-            try:
-                v_idx = tab.headers.index(value_col)
-            except ValueError:
-                continue
-            n = read_number(row[v_idx] if v_idx < len(row) else None)
+        if value_idx is not None:
+            n = read_number(row[value_idx] if value_idx < len(row) else None)
             if n is not None:
                 counts[key]["sum"] += n
                 counts[key]["nums"] += 1
+        if distinct_idx is not None and distinct_idx < len(row):
+            value = str(row[distinct_idx]).strip()
+            if value:
+                counts[key]["distinct"].add(value)
 
     if not counts:
+        if month_number is not None:
+            target = month_name[month_number]
+            if year_number is not None:
+                target += f" {year_number}"
+            return (
+                f"There are no valid dates in {tab.name!r} for {target}."
+            )
         return f"{date_col!r} in {tab.name!r} has no parsable dates."
 
     months = sorted(counts.keys())
+    if month_number is not None:
+        row_count = sum(counts[m]["rows"] for m in months)
+        month_label = month_name[month_number]
+        month_label += (
+            f" {year_number}" if year_number is not None else " across all years"
+        )
+        if distinct_col:
+            distinct_values = set().union(
+                *(counts[m]["distinct"] for m in months)
+            )
+            if distinct_col.strip().lower().replace("_", " ") == "order id":
+                order_label = "order" if len(distinct_values) == 1 else "orders"
+                count_label = f"{len(distinct_values)} distinct {order_label}"
+            else:
+                count_label = (
+                    f"{len(distinct_values)} distinct {distinct_col} values"
+                )
+            return (
+                f"{month_label} in {tab.name!r}: {count_label} "
+                f"across {row_count} rows."
+            )
+        if value_col:
+            total = sum(counts[m]["sum"] for m in months)
+            nums = sum(counts[m]["nums"] for m in months)
+            return (
+                f"{month_label} in {tab.name!r}: {value_col} total "
+                f"{total:,.2f} across {row_count} rows."
+                if nums
+                else f"{month_label} in {tab.name!r}: no numeric {value_col} values."
+            )
+        return f"{month_label} in {tab.name!r}: {row_count} rows."
+
+    if args.get("summary_only"):
+        quietest = bool(args.get("quietest"))
+        selected = min if quietest else max
+        month = selected(months, key=lambda key: counts[key]["rows"])
+        label = "Quietest" if quietest else "Busiest"
+        return (
+            f"{label} month by row count in {tab.name!r}: {month} "
+            f"({counts[month]['rows']} rows)."
+        )
+
     header = f"{tab.name!r} by month ({date_col!r}):"
     lines = [header]
     for m in months:
@@ -660,7 +751,7 @@ register(Tool(
 
 register(Tool(
     name="summarise_column",
-    what="sum, average, min, max for a numeric column",
+    what="summarise numeric columns (sum, average, median, min, max)",
     need=(),
     run=_summarise_column,
 ))
@@ -673,13 +764,6 @@ register(Tool(
 ))
 
 register(Tool(
-    name="singular_to_column",
-    what="guess the ID column that matches a noun in the request",
-    need=("text",),
-    run=lambda args: _singular_to_column(str(args.get("text") or "")),
-))
-
-register(Tool(
     name="date_range",
     what="the earliest and latest date in a column",
     need=(),
@@ -688,7 +772,10 @@ register(Tool(
 
 register(Tool(
     name="group_by_month",
-    what="group a tab by calendar month, optionally summing a value",
+    what=(
+        "group by calendar month, filter month/year, count distinct values, "
+        "or sum a measure"
+    ),
     need=(),
     run=_group_by_month,
 ))

@@ -29,13 +29,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from toolkit.brain.http import call_ai_async
+from toolkit.brain.presentation import present_direct_answer
 from toolkit.brain.verify import (
     check_claims,
     critique,
     invented_something,
 )
 from toolkit.tools.registry import load_tools, run_direct, tool_said_no
-
 
 MAX_STEPS = 8
 
@@ -54,6 +54,9 @@ Rules:
   · When you have enough, reply with {"answer": ...}.
   · Never invent a number. If a tool did not give you a figure, do not
     state one.
+  · Preserve the unit named by each tool result. Rows are not necessarily
+    distinct orders; only call them orders when the result counts distinct
+    Order ID values.
   · If a tool fails twice on the same thing, stop and say so honestly
     in the answer.
   · Answers are under 120 words, plain text. No markdown.
@@ -100,9 +103,13 @@ async def run_agent(
     # ── 1. Direct matchers ────────────────────────────────────────────
     direct = run_direct(request)
     if direct is not None:
+        answer = (
+            present_direct_answer(request, direct.tool, direct.answer)
+            if direct.ok else direct.answer
+        )
         return AgentResult(
             ok=direct.ok,
-            answer=direct.answer,
+            answer=answer,
             why=direct.why,
             trail=[{"step": 1, "tool": direct.tool, "result": direct.answer}],
             steps=1,

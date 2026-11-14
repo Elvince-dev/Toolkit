@@ -246,6 +246,84 @@ def test_summarise_column_uses_full_precision(sales):
     # Median is reported
     assert "median" in out.lower()
 
+
+def test_summarise_column_does_not_substitute_for_missing_column(sales):
+    tools = tool_registry.load_tools()
+    out = tools["summarise_column"].run({
+        "tab": "Sales", "column": "Profit",
+    })
+    assert "Profit" in out
+    assert "could not find" in out.lower()
+    assert "Amount" not in out
+
+
+def test_summarise_column_does_not_hop_away_from_explicit_tab(sales):
+    from toolkit.adapters.registry import sheet
+
+    sheet().write_range("Q1 Dataset", "A1", [
+        ["Profit"],
+        ["100"],
+    ])
+    tools = tool_registry.load_tools()
+    out = tools["summarise_column"].run({
+        "tab": "Sales", "column": "Profit",
+    })
+    assert "could not find" in out.lower()
+    assert "'Sales'" in out
+
+
+def test_run_direct_describes_available_tools_without_inspecting_sheet(sales):
+    result = tool_registry.run_direct(
+        "Hello, how many tasks can you perform based on tools bestowed upon you?"
+    )
+    assert result is not None
+    assert result.tool == "tool_catalog"
+    assert "17 tools" in result.answer
+    assert "summarise numeric columns" in result.answer.lower()
+
+
+def test_run_direct_does_not_default_an_unknown_explicit_tab(sales):
+    result = tool_registry.run_direct("how many rows are in Missing?")
+    assert result is not None
+    assert not result.ok
+    assert "no tab called 'Missing'" in result.answer
+
+
+def test_run_direct_summarises_median_sales(sales):
+    from toolkit.adapters.registry import sheet
+
+    sheet().write_range("Q1 Dataset", "A1", [
+        ["Order ID", "Order Date", "Sales"],
+        ["A", "2015-01-03", "10"],
+        ["B", "2015-01-04", "20"],
+        ["C", "2015-01-05", "90"],
+    ])
+    result = tool_registry.run_direct("what is the median sales value?")
+    assert result is not None
+    assert result.tool == "summarise_column"
+    assert "'Sales' in 'Q1 Dataset'" in result.answer
+    assert "median: 20.00" in result.answer
+
+
+def test_run_direct_resolves_data_range_to_explicit_tab(sales):
+    from toolkit.adapters.registry import sheet
+
+    sheet().write_range("Q1 Dataset", "A1", [
+        ["Order ID", "Order Date", "Sales"],
+        ["A", "2015-01-03", "10"],
+        ["B", "2018-12-30", "20"],
+    ])
+    result = tool_registry.run_direct(
+        "what is the data range of the orders in Q1 Dataset?"
+    )
+    assert result is not None
+    assert result.tool == "date_range"
+    assert "'Q1 Dataset'" in result.answer
+    assert "2015-01-03" in result.answer
+    assert "2018-12-30" in result.answer
+    assert "valid dates counted (rows): 2" in result.answer
+
+
 def test_count_distinct_orders(sales):
     """The Q3 failure: 'how many orders' should count distinct Order IDs."""
     from toolkit.adapters.registry import sheet
@@ -263,8 +341,8 @@ def test_count_distinct_orders(sales):
     out = tools["count_distinct"].run({
         "tab": "Orders", "column": "Order ID",
     })
-    assert "6" in out  # 6 rows
-    assert "3" in out  # 3 distinct order IDs
+    assert "rows: 6" in out
+    assert "distinct values: 3" in out
 
 
 def test_count_distinct_by_colloquial_phrase(sales):
@@ -279,6 +357,27 @@ def test_count_distinct_by_colloquial_phrase(sales):
     result = tool_registry.run_direct("how many orders are there?")
     assert result is not None
     assert "3 distinct values" in result.answer or "3\n" in result.answer
+
+
+def test_count_distinct_resolves_unique_product_phrase():
+    from toolkit.adapters.registry import sheet
+
+    adapter = sheet()
+    adapter.create_tab("Q1 Dataset")
+    adapter.write_range("Q1 Dataset", "A1", [
+        ["Product ID", "Product Name"],
+        ["P-1", "Widget"],
+        ["P-1", "Widget"],
+        ["P-2", "Gadget"],
+    ])
+
+    result = tool_registry.run_direct("How many unique products are there?")
+
+    assert result is not None
+    assert result.tool == "count_distinct"
+    assert "'Product ID' in 'Q1 Dataset'" in result.answer
+    assert "distinct values: 2" in result.answer
+
 
 def test_date_range(sales):
     tools = tool_registry.load_tools()
@@ -301,3 +400,65 @@ def test_group_by_month_sums_a_value(sales):
         "tab": "Sales", "date_column": "Date", "value": "Amount",
     })
     assert "sum" in out
+
+
+def test_month_question_counts_distinct_orders_and_can_filter_year(sales):
+    from toolkit.adapters.registry import sheet
+
+    sheet().write_range("Q1 Dataset", "A1", [
+        ["Order ID", "Order Date", "Sales"],
+        ["A", "2015-01-03", "10"],
+        ["A", "2015-01-04", "20"],
+        ["B", "2016-01-05", "30"],
+        ["C", "2015-02-01", "40"],
+    ])
+
+    result = tool_registry.run_direct(
+        "How many orders were placed in January based on Q1 Dataset?"
+    )
+    assert result is not None
+    assert result.tool == "group_by_month"
+    assert "January across all years" in result.answer
+    assert "2 distinct orders" in result.answer
+    assert "across 3 rows" in result.answer
+
+    result = tool_registry.run_direct(
+        "How many orders were placed in January 2015 based on Q1 Dataset?"
+    )
+    assert result is not None
+    assert "1 distinct order" in result.answer
+    assert "across 2 rows" in result.answer
+
+
+def test_month_name_without_tab_is_not_treated_as_a_tab():
+    from toolkit.adapters.registry import sheet
+
+    adapter = sheet()
+    adapter.create_tab("Q1 Dataset")
+    adapter.write_range("Q1 Dataset", "A1", [
+        ["Order ID", "Order Date"],
+        ["A", "2015-01-03"],
+        ["A", "2015-01-04"],
+    ])
+
+    result = tool_registry.run_direct("How many orders were placed in January?")
+    assert result is not None
+    assert "2 rows" in result.answer
+    assert "1 distinct order" in result.answer
+
+
+def test_busiest_month_returns_a_concise_summary(sales):
+    from toolkit.adapters.registry import sheet
+
+    sheet().write_range("Q1 Dataset", "A1", [
+        ["Order ID", "Order Date"],
+        ["A", "2015-01-03"],
+        ["B", "2015-01-04"],
+        ["C", "2015-02-01"],
+    ])
+
+    result = tool_registry.run_direct("What is the busiest month?")
+    assert result is not None
+    assert "Busiest month by row count" in result.answer
+    assert "2015-01:" not in result.answer
+    assert "2015-01 (2 rows)" in result.answer

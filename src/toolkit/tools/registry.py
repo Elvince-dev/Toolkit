@@ -125,22 +125,26 @@ MATCHERS: list[Matcher] = [
     Matcher(
         name="group_by_month",
         test=lambda t: bool(re.search(
-            r"\b(busiest|quietest|month by month|monthly|"
-            r"by month|in january|in february|in march|in april|"
-            r"in may|in june|in july|in august|in september|"
-            r"in october|in november|in december)\b",
+            r"\b(busiest|quietest|month by month|monthly|by month|"
+            r"january|february|march|april|may|june|july|august|"
+            r"september|october|november|december)\b",
             t, re.I)),
         tool="group_by_month",
         args=lambda t: {
             "tab": _find_tab(t),
             "date_column": _find_column(t),
+            "distinct_column": _singular_to_column(t),
+            "summary_only": bool(re.search(r"\b(busiest|quietest)\b", t, re.I)),
+            "quietest": bool(re.search(r"\bquietest\b", t, re.I)),
+            **_find_month_filter(t),
         },
     ),
     Matcher(
         name="date_range",
         test=lambda t: bool(re.search(
-            r"\b(earliest|latest|first and last|date range|"
-            r"span|how long)\b.{0,40}\b(date|order|record|entry)\b",
+            r"\b(data|date)\s+range\b|"
+            r"\b(earliest|latest|first and last|span|how long)\b"
+            r".{0,40}\b(date|order|record|entry)\b",
             t, re.I)),
         tool="date_range",
         args=lambda t: {
@@ -150,10 +154,15 @@ MATCHERS: list[Matcher] = [
     ),
     Matcher(
         name="summarise_column",
-        test=lambda t: bool(re.search(
-            r"\b(average|mean|sum|total|how much|max|maximum|"
-            r"min|minimum|highest|lowest)\b.{0,40}\b(of|for|in)\b",
-            t, re.I)),
+        test=lambda t: bool(
+            re.search(
+                r"\b(average|mean|median|sum|total|how much|max|maximum|"
+                r"min|minimum|highest|lowest)\b",
+                t, re.I,
+            )
+            and not re.search(r"\bby\b", t, re.I)
+            and _find_column(t)
+        ),
         tool="summarise_column",
         args=lambda t: {
             "tab": _find_tab(t),
@@ -190,7 +199,7 @@ MATCHERS: list[Matcher] = [
         tool="count_distinct",
         args=lambda t: {
             "tab": _find_tab(t),
-            "column": _find_column(t),
+            "column": _find_column(t) or _singular_to_column(t),
         },
     ),
     Matcher(
@@ -291,9 +300,26 @@ def run_direct(request: str) -> DirectResult | None:
     if not text:
         return None
 
+    tools = load_tools()
+    if re.search(
+        r"\b(how many|list|show|what)\b.{0,80}\b"
+        r"(tools|tasks|capabilities)\b|\bwhat can you do\b",
+        text, re.I,
+    ):
+        descriptions = "; ".join(
+            tool.what for _, tool in sorted(tools.items())
+        )
+        return DirectResult(
+            ok=True,
+            tool="tool_catalog",
+            answer=(
+                f"I have access to {len(tools)} tools. "
+                f"They let me {descriptions}."
+            ),
+        )
+
     _validate_matchers()
 
-    tools = load_tools()
     for matcher in MATCHERS:
         try:
             if not matcher.test(text):
@@ -415,17 +441,50 @@ def tool_said_no(reply: str) -> bool:
 
 
 def _find_tab(text: str) -> str:
-    """Extract a likely tab name from a request.
+    """Resolve a tab name from the actual sheet schema when possible."""
+    from toolkit.adapters.registry import sheet
 
-    Returns "" if nothing obvious. The tools that receive "" fall
-    back to their own default (usually the first tab).
-    """
+    tabs = sheet().list_tabs()
+    normalised_text = _normalise_phrase(text)
+    for name in sorted(tabs, key=len, reverse=True):
+        phrase = _normalise_phrase(name)
+        if not phrase:
+            continue
+        match = re.search(
+            r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])",
+            normalised_text,
+        )
+        if match:
+            before = normalised_text[:match.start()].split()
+            after = normalised_text[match.end():].split()
+            if (
+                (before and before[-1] in {"in", "from", "of", "on", "for"})
+                or (after and after[0] in {"tab", "sheet", "worksheet"})
+            ):
+                return name
+
+    # Preserve explicit unknown tab names so the tool reports them rather
+    # than silently answering from the first tab. Generic data nouns are
+    # not treated as tab names ("date range of orders", for example).
     m = re.search(
-        r"\b(?:in|from|of|on|for)\s+(?:the\s+)?[\"']?([A-Za-z][\w .\-]{1,40})[\"']?",
-        text,
+        r"\b(?:in|from|on|of)\s+(?:the\s+)?"
+        r"([A-Za-z][\w .\-]{0,40}?)"
+        r"(?=\s+\b(?:in|from|of|on|for|by|where|with)\b|[.,;:!?]|$)",
+        text, re.I,
     )
     if m:
-        return m.group(1).strip()
+        candidate = m.group(1).strip()
+        candidate_phrase = _normalise_phrase(candidate)
+        month_names = "|".join(_MONTHS)
+        is_month_filter = bool(re.fullmatch(
+            rf"(?:{month_names})(?: (?:19|20)\d{{2}})?",
+            candidate_phrase,
+        ))
+        if candidate_phrase not in {
+            "data", "dataset", "order", "orders", "record", "records",
+            "entry", "entries", "transaction", "transactions",
+        } and not is_month_filter:
+            return candidate
     return ""
 
 
@@ -440,13 +499,31 @@ _COLUMN_TAIL = (
 
 
 def _find_column(text: str) -> str:
-    """Extract a likely column name from a request.
+    """Resolve a named header from the request, then use phrasing clues.
 
     Returns the raw word, case-insensitive. Stops at the first
     preposition or punctuation so "by site in Trials" extracts
-    "site", not "site in Trials". The tool that receives the result
-    resolves it against the actual headers.
+    "site", not "site in Trials".
     """
+    from toolkit.adapters.registry import sheet
+
+    adapter = sheet()
+    tab_name = _find_tab(text)
+    tabs = [tab_name] if tab_name else adapter.list_tabs()
+    normalised_text = _normalise_phrase(text)
+    matches: list[tuple[int, str]] = []
+    for name in tabs:
+        headers = adapter.read_tab(name, sample=1).headers
+        for header in headers:
+            phrase = _normalise_phrase(header)
+            if phrase and re.search(
+                r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])",
+                normalised_text,
+            ):
+                matches.append((len(phrase), header))
+    if matches:
+        return max(matches, key=lambda match: match[0])[1]
+
     m = re.search(r"\bcolumn\s+" + _COLUMN_TAIL, text, re.I)
     if m:
         return m.group(1).strip()
@@ -461,6 +538,40 @@ def _find_column(text: str) -> str:
 
     return ""
 
+
+def _normalise_phrase(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value).lower()).strip()
+
+
+_MONTHS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+
+
+def _find_month_filter(text: str) -> dict[str, int]:
+    month_pattern = "|".join(_MONTHS)
+    match = re.search(r"\b(" + month_pattern + r")\b", text, re.I)
+    if not match:
+        return {}
+
+    result = {"month": _MONTHS[match.group(1).lower()]}
+    year = re.search(r"\b(?:19|20)\d{2}\b", text)
+    if year:
+        result["year"] = int(year.group())
+    return result
+
+
 def _singular_to_column(text: str) -> str:
     """Guess the ID column that matches a noun in the request.
 
@@ -471,7 +582,13 @@ def _singular_to_column(text: str) -> str:
     resolves the name against the actual headers, so 'order ID'
     fuzzy-matches 'Order ID', 'order_id', or 'Order_ID'.
     """
-    m = re.search(r"\bhow many (\w+?)s?\b", text, re.I)
+    m = re.search(
+        r"\b(?:how many(?:\s+(?:unique|distinct|different))?|"
+        r"(?:count|number of)\s+(?:the\s+)?"
+        r"(?:unique|distinct|different))\s+(\w+?)s?\b",
+        text,
+        re.I,
+    )
     if not m:
         return ""
     noun = m.group(1).lower()
