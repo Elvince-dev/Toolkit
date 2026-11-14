@@ -56,7 +56,26 @@ class DirectResult:
     answer: str = ""
     why: str = ""
 
+@dataclass
+class ToolResult:
+    """What an action tool returns when 'it worked' is not a yes/no.
 
+    Read-only tools keep returning a plain string; tool_said_no()
+    classifies those as it always has. Action tools — send, draft,
+    archive, book — return a ToolResult so partial success is
+    representable. run_direct and run_agent prefer .ok when present
+    and fall back to tool_said_no() for bare strings.
+    """
+    ok: bool
+    prose: str
+
+
+def said_ok(prose: str) -> ToolResult:
+    return ToolResult(ok=True, prose=str(prose))
+
+
+def said_no(prose: str) -> ToolResult:
+    return ToolResult(ok=False, prose=str(prose))
 # ── the registry ──────────────────────────────────────────────────────
 
 @lru_cache(maxsize=1)
@@ -362,8 +381,17 @@ def run_direct(request: str) -> DirectResult | None:
                 why=f"The {tool.name} step failed: {exc}",
             )
 
-        text_result = str(result)
-        failed = tool_said_no(text_result)
+        # A ToolResult carries its own verdict. A bare string is
+        # classified by tool_said_no() as it always has been. This
+        # is what lets an action tool say "partly worked" without
+        # the prose being misread.
+        if isinstance(result, ToolResult):
+            text_result = result.prose
+            failed = not result.ok
+        else:
+            text_result = str(result)
+            failed = tool_said_no(text_result)
+
         if failed and matcher.soft:
             return None
         return DirectResult(

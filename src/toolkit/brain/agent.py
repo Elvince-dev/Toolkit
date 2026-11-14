@@ -35,7 +35,7 @@ from toolkit.brain.verify import (
     critique,
     invented_something,
 )
-from toolkit.tools.registry import load_tools, run_direct, tool_said_no
+from toolkit.tools.registry import ToolResult, load_tools, run_direct, tool_said_no
 
 MAX_STEPS = 8
 
@@ -199,12 +199,22 @@ async def run_agent(
         except Exception as exc:
             result = f"That tool failed: {exc}"
 
-        result_text = str(result)
+        # ToolResult carries its own ok flag; a bare string is
+        # classified by tool_said_no(). The trail records the prose
+        # either way — the model needs to read what the tool said.
+        if isinstance(result, ToolResult):
+            result_text = result.prose
+            failed = not result.ok
+        else:
+            result_text = str(result)
+            failed = tool_said_no(result_text)
+
         trail.append({
             "step": step + 1,
             "tool": tool_name,
             "thought": move.get("thought", ""),
             "result": result_text[:220],
+            "failed": failed,
         })
         notes.append(
             f"STEP {step + 1} — used {tool_name}\n"
