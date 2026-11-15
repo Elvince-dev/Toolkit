@@ -87,10 +87,10 @@ def load_tools() -> dict[str, Tool]:
     toolkit.tools.registry for the Tool class, but the registry
     builds the dict by importing the tool modules.
     """
-    from toolkit.tools import data, mail, write  # noqa: F401
+    from toolkit.tools import calendar, data, mail, write  # noqa: F401
 
     out: dict[str, Tool] = {}
-    for module in (data, mail,write):
+    for module in (calendar, data, mail, write):
         for name, tool in getattr(module, "TOOLS", {}).items():
             if name in out:
                 raise RuntimeError(
@@ -332,6 +332,32 @@ MATCHERS: list[Matcher] = [
             ),
             "subject": "",
             "body": "",
+        },
+        soft=True,
+    ),
+    Matcher(
+        name="agenda",
+        test=lambda t: bool(re.search(
+            r"\b(calendar|agenda|schedule|events)\b.{0,20}\b(today|tomorrow)\b|"
+            r"\b(what'?s|check) (on )?my (calendar|schedule)\b",
+            t, re.I)),
+        tool="agenda",
+        args=lambda t: {
+            "when": "tomorrow" if "tomorrow" in t.lower() else "today"
+        },
+    ),
+    Matcher(
+        name="book_meeting",
+        test=lambda t: bool(re.search(
+            r"\b(book|schedule|create|add)\b.{0,20}\b(meeting|event|call)\b",
+            t, re.I)),
+        tool="book_meeting",
+        args=lambda t: {
+            # Very basic extraction for the direct matcher. 
+            # The LLM handles the complex stuff.
+            "title": (re.search(r"\b(?:meeting|event|call)\s+(?:called\s+|about\s+)?['\"]?([^'\"]+)['\"]?", t, re.I).group(1).strip()
+                      if re.search(r"\b(?:meeting|event|call)\s+(?:called\s+|about\s+)?['\"]?([^'\"]+)['\"]?", t, re.I) else "Meeting"),
+            "when": "today 14:00", 
         },
         soft=True,
     ),

@@ -53,20 +53,20 @@ def mail():
         return None
 
 @lru_cache(maxsize=1)
-def calendar() -> CalendarAdapter | None:
-    name = settings().calendar_adapter
-    if name == "fake":
-        from toolkit.adapters.calendar.fake import FakeCalendarAdapter
-        return FakeCalendarAdapter()  # type: ignore[return-value]
-    if name == "google":
-        from toolkit.adapters.calendar.google import GoogleCalendarAdapter
-        return GoogleCalendarAdapter()  # type: ignore[return-value]
-    if name == "caldav":
-        from toolkit.adapters.calendar.caldav import CalDavAdapter
-        return CalDavAdapter()  # type: ignore[return-value]
-    return None
+def calendar():
+    """Return the configured CalendarAdapter, or None."""
+    from toolkit.config import settings
+    token_path = settings().data_dir / "token.json"
+    if not token_path.exists():
+        return None
 
-_mail_instance = None
+    try:
+        from toolkit.adapters.calendar.google import GoogleCalendarAdapter
+        return GoogleCalendarAdapter()
+    except Exception as e:
+        import logging
+        logging.warning(f"Could not load Calendar adapter: {e}")
+        return None
 
 @lru_cache(maxsize=1)
 def mail():
