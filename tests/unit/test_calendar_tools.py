@@ -1,5 +1,6 @@
 import pytest
 from datetime import datetime, timezone
+from dateutil.tz import tzlocal
 from toolkit.adapters.calendar.fake import FakeCalendarAdapter
 from toolkit.tools import calendar as cal_tools
 from toolkit.adapters.base import Event
@@ -15,7 +16,7 @@ def test_agenda_empty(fake_calendar):
     assert "no events" in res.lower()
 
 def test_agenda_lists_events(fake_calendar):
-    today = datetime.now(timezone.utc)
+    today = datetime.now(tzlocal())
     fake_calendar.events.append(Event(
         id="1", title="Test Meeting", 
         start=today, end=today, guests=[]

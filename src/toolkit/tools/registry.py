@@ -353,11 +353,23 @@ MATCHERS: list[Matcher] = [
             t, re.I)),
         tool="book_meeting",
         args=lambda t: {
-            # Very basic extraction for the direct matcher. 
-            # The LLM handles the complex stuff.
-            "title": (re.search(r"\b(?:meeting|event|call)\s+(?:called\s+|about\s+)?['\"]?([^'\"]+)['\"]?", t, re.I).group(1).strip()
-                      if re.search(r"\b(?:meeting|event|call)\s+(?:called\s+|about\s+)?['\"]?([^'\"]+)['\"]?", t, re.I) else "Meeting"),
-            "when": "today 14:00", 
+            "title": (
+                (m := re.search(
+                    r"\bcalled\s+['\"]?([^'\"]+?)['\"]?(?:\s+for|\s+at|\s+on|$)",
+                    t, re.I
+                ))
+                and m.group(1).strip() or ""
+            ),
+            "when": (
+                (m := re.search(r"\b(?:for|at|on)\s+(.+?)(?:\s+(?:for|with)|$)", t, re.I))
+                and m.group(1).strip() or ""
+            ),
+            "minutes": (
+                # Extract duration e.g. "3 hours", "30 minutes"
+                (m := re.search(r"\b(?:for\s+)?(\d+)\s*(hour|hr|h|minute|min|m)\b", t, re.I))
+                and (int(m.group(1)) * 60 if m.group(2).lower().startswith("h") else int(m.group(1)))
+                or 60  # Default to 60 if no duration specified
+            ),
         },
         soft=True,
     ),

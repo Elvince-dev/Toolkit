@@ -25,8 +25,8 @@ class GoogleCalendarAdapter(CalendarAdapter):
         try:
             events_result = self.service.events().list(
                 calendarId="primary",
-                timeMin=start.isoformat() + "Z", # Assuming UTC for simplicity
-                timeMax=end.isoformat() + "Z",
+                timeMin=start.isoformat(), # Assuming UTC for simplicity
+                timeMax=end.isoformat(),
                 singleEvents=True,
                 orderBy="startTime",
             ).execute()
@@ -41,8 +41,8 @@ class GoogleCalendarAdapter(CalendarAdapter):
         end_raw = item["end"].get("dateTime") or item["end"].get("date")
         
         # Simple ISO parse (Google usually sends RFC3339)
-        start = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
-        end = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+        start = datetime.fromisoformat(start_raw)
+        end = datetime.fromisoformat(end_raw)
 
         guests = [a["email"] for a in item.get("attendees", []) if "email" in a]
         join_url = item.get("hangoutLink", "")
@@ -62,8 +62,14 @@ class GoogleCalendarAdapter(CalendarAdapter):
         body = {
             "summary": event.title,
             "location": event.where,
-            "start": {"dateTime": event.start.isoformat()},
-            "end": {"dateTime": event.end.isoformat()},
+            "start": {
+                "dateTime": event.start.isoformat(),
+                "timeZone": "UTC"
+            },
+            "end": {
+                "dateTime": event.end.isoformat(),
+                "timeZone": "UTC"
+            },
             "attendees": [{"email": e} for e in event.guests] if invite else [],
         }
 
@@ -132,8 +138,8 @@ class GoogleCalendarAdapter(CalendarAdapter):
         """Find free slots using the freebusy API."""
         try:
             body = {
-                "timeMin": start.isoformat() + "Z",
-                "timeMax": end.isoformat() + "Z",
+                "timeMin": start.isoformat(),
+                "timeMax": end.isoformat(),
                 "items": [{"id": "primary"}]
             }
             result = self.service.freebusy().query(body=body).execute()

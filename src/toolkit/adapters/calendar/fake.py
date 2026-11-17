@@ -12,7 +12,7 @@ class FakeCalendarAdapter(CalendarAdapter):
     def __init__(self):
         self.events: list[Event] = []
         self.fail_create = False
-
+            
     def list_events(self, start: datetime, end: datetime) -> list[Event]:
         """Return events between start and end."""
         return [

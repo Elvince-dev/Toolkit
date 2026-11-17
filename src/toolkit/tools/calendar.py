@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from dateutil import parser as date_parser
+from dateutil.tz import tzlocal
 from typing import Any
 
 from toolkit.adapters.registry import calendar
@@ -20,7 +22,7 @@ def _agenda(args: dict[str, Any]) -> str:
         return "I have no calendar connected."
 
     # Default to today
-    now = datetime.now(timezone.utc)
+    now = datetime.now(tzlocal())
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
 
@@ -38,8 +40,19 @@ def _agenda(args: dict[str, Any]) -> str:
 
     lines = [f"{len(events)} event(s) scheduled:"]
     for e in events:
-        time_str = e.start.strftime("%H:%M")
-        line = f"  · {time_str} — {e.title}"
+        start_str = e.start.strftime("%H:%M")
+        end_str = e.end.strftime("%H:%M")
+        
+        # Calculate duration
+        duration_mins = int((e.end - e.start).total_seconds() / 60)
+        if duration_mins >= 60:
+            dur_str = f"{duration_mins // 60}h"
+            if duration_mins % 60:
+                dur_str += f" {duration_mins % 60}m"
+        else:
+            dur_str = f"{duration_mins}m"
+
+        line = f"  · {start_str}–{end_str} ({dur_str}) — {e.title}"
         if e.join_url:
             line += f" (Meet: {e.join_url})"
         lines.append(line)
@@ -57,19 +70,45 @@ def _book_meeting(args: dict[str, Any]):
     if not title or not when_str:
         return said_no("I need a title and a time to book a meeting.")
 
-    # Basic parser: expects "YYYY-MM-DD HH:MM" or "today 14:00"
+    # Parse the natural language time
+       # Parse the natural language time
     try:
-        now = datetime.now(timezone.utc)
-        if when_str.startswith("today"):
-            parts = when_str.split()
-            time_parts = parts[1].split(":") if len(parts) > 1 else ["14", "00"]
-            start = now.replace(hour=int(time_parts[0]), minute=int(time_parts[1]), second=0, microsecond=0)
-        else:
-            # Try parsing full ISO-like string
-            start = datetime.strptime(when_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-    except Exception:
-        return said_no(f"I could not understand the time '{when_str}'. Use 'YYYY-MM-DD HH:MM'.")
-
+        from dateutil import parser as date_parser
+        from dateutil.tz import tzlocal
+        import re as _re
+        
+        now = datetime.now(tzlocal())
+        
+        # Normalise common phrases
+        cleaned = when_str.lower().strip()
+        
+        # Chop off the duration so dateutil doesn't choke on it.
+        cleaned = _re.sub(r"\s+for\s+\d+\s+(hours?|minutes?|mins?)", "", cleaned)
+        
+        if cleaned.startswith("today"):
+            cleaned = _re.sub(r"today\s*", now.strftime("%Y-%m-%d "), cleaned)
+        elif cleaned.startswith("tomorrow"):
+            cleaned = _re.sub(
+                r"tomorrow\s*",
+                (now + timedelta(days=1)).strftime("%Y-%m-%d "),
+                cleaned
+            )
+        
+        # Parse. We use `default=now` so that if the string is missing 
+        # a year or time, dateutil uses today's date or current time.
+        try:
+            start = date_parser.parse(cleaned, default=now)
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=tzlocal())
+        except (ValueError, TypeError):
+            # Fallback: today at 14:00
+            start = now.replace(hour=14, minute=0, second=0, microsecond=0)
+            
+    except Exception as exc:
+        return said_no(
+            f"I could not understand the time '{when_str}'. "
+            f"Try 'tomorrow at 3pm' or '2026-11-20 10:00'."
+        )
     duration = int(args.get("minutes", 60))
     end = start + timedelta(minutes=duration)
 
@@ -84,7 +123,6 @@ def _book_meeting(args: dict[str, Any]):
 
     try:
         created = adapter.create_event(event)
-        # Try to add a Meet link automatically
         meet_url = ""
         if args.get("with_meet", True):
             meet_url = adapter.add_meet_link(created.id)
@@ -95,7 +133,6 @@ def _book_meeting(args: dict[str, Any]):
         return said_ok(msg)
     except Exception as exc:
         return said_no(f"Could not book meeting: {exc}")
-
 # ── register ──────────────────────────────────────────────────────────
 
 register(Tool(
@@ -107,7 +144,7 @@ register(Tool(
 
 register(Tool(
     name="book_meeting",
-    what="book a calendar event (needs title, when, duration)",
+    what="book a calendar event (needs title, when, optional minutes)",
     need=("title", "when"),
     run=_book_meeting,
 ))

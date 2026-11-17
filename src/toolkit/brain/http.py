@@ -571,7 +571,6 @@ def _bump_wins(key_id: str) -> None:
     except Exception:
         pass
 
-
 def call_ai(
     prompt: str,
     *,
