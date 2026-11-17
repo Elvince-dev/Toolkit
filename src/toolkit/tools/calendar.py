@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from dateutil import parser as date_parser
-from dateutil.tz import tzlocal
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from toolkit.adapters.registry import calendar
@@ -15,6 +13,13 @@ TOOLS: dict[str, Tool] = {}
 def register(tool: Tool) -> None:
     TOOLS[tool.name] = tool
 
+
+def _calendar_time(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _agenda(args: dict[str, Any]) -> str:
     """List events for today or tomorrow."""
     adapter = calendar()
@@ -22,7 +27,7 @@ def _agenda(args: dict[str, Any]) -> str:
         return "I have no calendar connected."
 
     # Default to today
-    now = datetime.now(tzlocal())
+    now = datetime.now(UTC)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
 
@@ -40,11 +45,13 @@ def _agenda(args: dict[str, Any]) -> str:
 
     lines = [f"{len(events)} event(s) scheduled:"]
     for e in events:
-        start_str = e.start.strftime("%H:%M")
-        end_str = e.end.strftime("%H:%M")
+        start = _calendar_time(e.start)
+        end = _calendar_time(e.end)
+        start_str = start.strftime("%H:%M")
+        end_str = end.strftime("%H:%M")
         
         # Calculate duration
-        duration_mins = int((e.end - e.start).total_seconds() / 60)
+        duration_mins = int((end - start).total_seconds() / 60)
         if duration_mins >= 60:
             dur_str = f"{duration_mins // 60}h"
             if duration_mins % 60:
@@ -70,20 +77,21 @@ def _book_meeting(args: dict[str, Any]):
     if not title or not when_str:
         return said_no("I need a title and a time to book a meeting.")
 
-    # Parse the natural language time
-       # Parse the natural language time
     try:
         from dateutil import parser as date_parser
-        from dateutil.tz import tzlocal
         import re as _re
         
-        now = datetime.now(tzlocal())
+        now = datetime.now(UTC)
         
         # Normalise common phrases
         cleaned = when_str.lower().strip()
         
         # Chop off the duration so dateutil doesn't choke on it.
-        cleaned = _re.sub(r"\s+for\s+\d+\s+(hours?|minutes?|mins?)", "", cleaned)
+        cleaned = _re.sub(
+            r"\s+for\s+\d+\s*(?:hours?|hrs?|h|minutes?|mins?|m)\b",
+            "",
+            cleaned,
+        )
         
         if cleaned.startswith("today"):
             cleaned = _re.sub(r"today\s*", now.strftime("%Y-%m-%d "), cleaned)
@@ -96,15 +104,18 @@ def _book_meeting(args: dict[str, Any]):
         
         # Parse. We use `default=now` so that if the string is missing 
         # a year or time, dateutil uses today's date or current time.
+        # Clear smaller time fields so "6 pm" doesn't inherit the
+        # current minute or second.
         try:
-            start = date_parser.parse(cleaned, default=now)
+            default = now.replace(minute=0, second=0, microsecond=0)
+            start = date_parser.parse(cleaned, default=default)
             if start.tzinfo is None:
-                start = start.replace(tzinfo=tzlocal())
+                start = start.replace(tzinfo=UTC)
         except (ValueError, TypeError):
             # Fallback: today at 14:00
             start = now.replace(hour=14, minute=0, second=0, microsecond=0)
             
-    except Exception as exc:
+    except Exception:
         return said_no(
             f"I could not understand the time '{when_str}'. "
             f"Try 'tomorrow at 3pm' or '2026-11-20 10:00'."

@@ -127,6 +127,45 @@ class Matcher:
     soft: bool = False
 
 
+def _meeting_when(text: str) -> str:
+    """Keep the date and time while removing booking details."""
+    cleaned = re.sub(
+        r"\s+for\s+\d+\s*(?:hours?|hrs?|h|minutes?|mins?|m)\b",
+        "",
+        text,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\b(?:book|schedule|create|add)\b.{0,30}\b(meeting|event|call)\b",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\bcalled\s+.+?(?=\s+(?:for|at|on|today|tomorrow|"
+        r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|$)",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"^\s*(?:for|at|on)\s+", "", cleaned, flags=re.I)
+    return re.sub(r"\s+", " ", cleaned).strip(" \t,.;")
+
+
+def _meeting_minutes(text: str) -> int:
+    match = re.search(
+        r"\b(?:for\s+)?(\d+)\s*(hours?|hrs?|h|minutes?|mins?|m)\b",
+        text,
+        re.I,
+    )
+    if not match:
+        return 60
+    amount = int(match.group(1))
+    return amount * 60 if match.group(2).lower().startswith("h") else amount
+
+
 # Rules are tried in order. The first one that matches wins.
 # Deliberately conservative: a wrong match is worse than no match.
 #
@@ -360,16 +399,8 @@ MATCHERS: list[Matcher] = [
                 ))
                 and m.group(1).strip() or ""
             ),
-            "when": (
-                (m := re.search(r"\b(?:for|at|on)\s+(.+?)(?:\s+(?:for|with)|$)", t, re.I))
-                and m.group(1).strip() or ""
-            ),
-            "minutes": (
-                # Extract duration e.g. "3 hours", "30 minutes"
-                (m := re.search(r"\b(?:for\s+)?(\d+)\s*(hour|hr|h|minute|min|m)\b", t, re.I))
-                and (int(m.group(1)) * 60 if m.group(2).lower().startswith("h") else int(m.group(1)))
-                or 60  # Default to 60 if no duration specified
-            ),
+            "when": _meeting_when(t),
+            "minutes": _meeting_minutes(t),
         },
         soft=True,
     ),

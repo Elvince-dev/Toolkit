@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from googleapiclient.discovery import build
@@ -59,15 +59,25 @@ class GoogleCalendarAdapter(CalendarAdapter):
 
     def create_event(self, event: Event, *, invite: bool = True) -> Event:
         """Create an event."""
+        start = (
+            event.start.astimezone(UTC)
+            if event.start.tzinfo
+            else event.start.replace(tzinfo=UTC)
+        )
+        end = (
+            event.end.astimezone(UTC)
+            if event.end.tzinfo
+            else event.end.replace(tzinfo=UTC)
+        )
         body = {
             "summary": event.title,
             "location": event.where,
             "start": {
-                "dateTime": event.start.isoformat(),
+                "dateTime": start.isoformat(),
                 "timeZone": "UTC"
             },
             "end": {
-                "dateTime": event.end.isoformat(),
+                "dateTime": end.isoformat(),
                 "timeZone": "UTC"
             },
             "attendees": [{"email": e} for e in event.guests] if invite else [],
