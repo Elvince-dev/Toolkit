@@ -87,10 +87,10 @@ def load_tools() -> dict[str, Tool]:
     toolkit.tools.registry for the Tool class, but the registry
     builds the dict by importing the tool modules.
     """
-    from toolkit.tools import calendar, data, mail, write  # noqa: F401
+    from toolkit.tools import calendar, data, mail, web, write  # noqa: F401
 
     out: dict[str, Tool] = {}
-    for module in (calendar, data, mail, write):
+    for module in (calendar, data, mail, web, write):
         for name, tool in getattr(module, "TOOLS", {}).items():
             if name in out:
                 raise RuntimeError(
@@ -166,6 +166,20 @@ def _meeting_minutes(text: str) -> int:
     return amount * 60 if match.group(2).lower().startswith("h") else amount
 
 
+def _exchange_args(text: str) -> dict[str, str]:
+    match = re.search(
+        r"\b([A-Z]{3})\s+(?:to|in)\s+([A-Z]{3})\b",
+        text,
+        re.I,
+    )
+    if not match:
+        return {"base": "", "target": ""}
+    return {
+        "base": match.group(1).upper(),
+        "target": match.group(2).upper(),
+    }
+
+
 # Rules are tried in order. The first one that matches wins.
 # Deliberately conservative: a wrong match is worse than no match.
 #
@@ -180,6 +194,31 @@ def _meeting_minutes(text: str) -> int:
 #   6. undo and snapshot — always last, so a word like "restore" in
 #      a broader sentence does not hijack the whole request.
 MATCHERS: list[Matcher] = [
+    Matcher(
+        name="weather",
+        test=lambda t: bool(re.search(
+            r"\b(weather|temperature|forecast|raining|sunny|cold|hot)\b",
+            t, re.I)),
+        tool="weather",
+        args=lambda t: {
+            # "weather in X" or "weather for X" or "what's the weather in X"
+            "city": (
+                (m := re.search(r"\b(?:in|for|at)\s+([A-Za-z][A-Za-z ]{1,30}?)(?:\s+(?:today|tomorrow|right now|now)|[?.!]|$)", t))
+                and m.group(1).strip() or ""
+            ),
+        },
+        soft=True,
+    ),
+    Matcher(
+        name="exchange_rate",
+        test=lambda t: bool(re.search(
+            r"\b(exchange rate|convert|how much is|currency)\b|"
+            r"\b[A-Z]{3}\s+(?:to|in)\s+[A-Z]{3}\b",
+            t, re.I)),
+        tool="exchange_rate",
+        args=_exchange_args,
+        soft=True,
+    ),
     Matcher(
         name="group_by_month",
         test=lambda t: bool(re.search(
