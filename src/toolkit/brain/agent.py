@@ -30,6 +30,7 @@ from typing import Any
 
 from toolkit.brain.http import call_ai_async, run_sync
 from toolkit.brain.presentation import present_direct_answer
+from toolkit.brain.history import load_recent, save_turn
 from toolkit.brain.verify import (
     check_claims,
     critique,
@@ -107,6 +108,11 @@ async def run_agent(
             present_direct_answer(request, direct.tool, direct.answer)
             if direct.ok else direct.answer
         )
+
+         # Save direct hits to history too
+        save_turn("user", request)
+        save_turn("assistant", answer)
+        
         return AgentResult(
             ok=direct.ok,
             answer=answer,
@@ -115,8 +121,7 @@ async def run_agent(
             steps=1,
             seconds=time.monotonic() - started,
         )
-
-    # ── 2. Model loop ─────────────────────────────────────────────────
+        # ── 2. Model loop ─────────────────────────────────────────────────
     tools = load_tools()
     tool_menu = _tool_menu(tools)
 
@@ -125,11 +130,15 @@ async def run_agent(
 
     base_system = system or SYSTEM_PROMPT
     full_system = base_system + "\n\nTOOLS YOU MAY USE:\n" + tool_menu
+    
+    # Load the last 10 turns (5 exchanges) for context
+    history = load_recent(10)
+    past_turns = [{"role": t.role, "text": t.text} for t in history]
 
     for step in range(MAX_STEPS):
         prompt = _build_prompt(request, notes)
         try:
-            raw = await call_ai_async(prompt, system=full_system)
+            raw = await call_ai_async(prompt, system=full_system, turns=past_turns)
         except Exception as exc:
             return AgentResult(
                 ok=False,
@@ -160,6 +169,10 @@ async def run_agent(
 
             if invented is not None:
                 answer += "\n\n" + invented.say
+
+            # Save the exchange to history
+            save_turn("user", request)
+            save_turn("assistant", answer)
 
             return AgentResult(
                 ok=True,
