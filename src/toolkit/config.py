@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     mail_adapter: MailAdapterName = "fake"
     calendar_adapter: CalendarAdapterName = "fake"
 
-    csv_path: Path = Path("./data/csv")
+    csv_path: Path = Path("./data/csv", "./data/uploads")
     sqlite_path: Path = Path("./data/toolkit.db")
     pg_dsn: str | None = None
 
