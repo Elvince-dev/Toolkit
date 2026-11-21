@@ -1,18 +1,21 @@
 import { useState } from "react";
-import { Upload, ArrowRight, Shield, Zap, Database } from "lucide-react";
+import { Upload, Shield, Zap, Database } from "lucide-react";
 
 interface Props {
   onUploadSuccess: (filename: string) => void;
+  onCancel?: () => void;
 }
 
-export default function WelcomeScreen({ onUploadSuccess }: Props) {
+export default function WelcomeScreen({ onUploadSuccess, onCancel }: Props) {
   const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState("");
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
+    setError("");
     const formData = new FormData();
     formData.append("file", file);
 
@@ -22,19 +25,29 @@ export default function WelcomeScreen({ onUploadSuccess }: Props) {
         body: formData,
       });
       const data = await res.json();
-      onUploadSuccess(data.filename);
+      if (!res.ok) {
+        throw new Error(data.detail || "Upload failed.");
+      }
+      onUploadSuccess(data.dataset);
     } catch (error) {
       console.error("Upload failed", error);
-      alert("Upload failed. Is the Python server running?");
+      setError(error instanceof Error ? error.message : "Upload failed. Is the Python server running?");
     } finally {
       setIsUploading(false);
+      e.target.value = "";
     }
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-background">
       <div className="max-w-2xl w-full text-center space-y-8">
-        
+        {onCancel && (
+          <div className="text-left">
+            <button onClick={onCancel} className="text-sm text-muted hover:text-ink">
+              Back to conversation
+            </button>
+          </div>
+        )}
         {/* Header */}
         <div className="space-y-4">
           <h1 className="font-serif text-5xl text-primary tracking-tight">
@@ -61,9 +74,10 @@ export default function WelcomeScreen({ onUploadSuccess }: Props) {
             <h3 className="text-lg font-medium text-ink mb-1">
               {isUploading ? "Uploading and reading..." : "Drop a CSV here, or click to upload"}
             </h3>
-            <p className="text-sm text-muted">CSV, Excel, or a Google Sheet URL</p>
+            <p className="text-sm text-muted">CSV files</p>
           </div>
         </div>
+        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
 
         {/* Trust Badges */}
         <div className="grid grid-cols-3 gap-4 pt-8">

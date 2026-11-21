@@ -3,24 +3,39 @@ import ChatPage from './components/ChatPage';
 import WelcomeScreen from './components/WelcomeScreen';
 
 function App() {
-  const [hasDataset, setHasDataset] = useState<boolean>(false);
+  const [activeDataset, setActiveDataset] = useState<string | null>(() =>
+    localStorage.getItem("toolkit_active_dataset")?.replace(/\.csv$/i, "") || null,
+  );
+  const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem("toolkit_active_dataset"));
 
-  // Check if we have a dataset in local storage on mount
   useEffect(() => {
-    const activeDataset = localStorage.getItem("toolkit_active_dataset");
-    if (activeDataset) setHasDataset(true);
-  }, []);
+    if (activeDataset) {
+      localStorage.setItem("toolkit_active_dataset", activeDataset);
+    } else {
+      localStorage.removeItem("toolkit_active_dataset");
+    }
+  }, [activeDataset]);
 
   const handleUploadSuccess = (filename: string) => {
-    localStorage.setItem("toolkit_active_dataset", filename);
-    setHasDataset(true);
+    setActiveDataset(filename);
+    setShowWelcome(false);
   };
 
-  if (!hasDataset) {
-    return <WelcomeScreen onUploadSuccess={handleUploadSuccess} />;
+  if (showWelcome || !activeDataset) {
+    return (
+      <WelcomeScreen
+        onUploadSuccess={handleUploadSuccess}
+        onCancel={activeDataset ? () => setShowWelcome(false) : undefined}
+      />
+    );
   }
 
-  return <ChatPage />;
+  return (
+    <ChatPage
+      datasetName={activeDataset}
+      onAddDataset={() => setShowWelcome(true)}
+    />
+  );
 }
 
 export default App;

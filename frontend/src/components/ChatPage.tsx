@@ -1,7 +1,8 @@
-//import ReactMarkdown from "react-markdown";
-//import remarkGfm from "remark-gfm";
+// import ReactMarkdown from "react-markdown";
+// import remarkGfm from "remark-gfm";
 import { useState, useRef, useEffect } from "react";
 import { ArrowUp, Check, ChevronDown, Plus, Settings, Table } from "lucide-react";
+import DataView from "./DataView";
 
 type Message = {
   id: string;
@@ -10,30 +11,35 @@ type Message = {
   tool?: string;
 };
 
-export default function ChatPage() {
-    const [messages, setMessages] = useState<Message[]>(() => {
-    const saved = localStorage.getItem("toolkit_chat");
-    return saved ? JSON.parse(saved) : [
-      { id: "1", role: "user", content: "How are sales looking this quarter?" },
-      { id: "2", role: "assistant", content: "A strong start to the year.\nYou brought in $46,500 in Q1.", tool: "monthly_sales_check" }
-    ];
+interface Props {
+  datasetName: string;
+  onAddDataset: () => void;
+}
+
+export default function ChatPage({ datasetName, onAddDataset }: Props) {
+  const chatStorageKey = `toolkit_chat_${datasetName}`;
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const saved = localStorage.getItem(chatStorageKey);
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  const [showData, setShowData] = useState(false);
+
   // Auto-scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  // Persist messages to localStorage / save chat history
-    useEffect(() => {
-    localStorage.setItem("toolkit_chat", JSON.stringify(messages));
-  }, [messages]);
+  // Persist messages to localStorage
+  useEffect(() => {
+    localStorage.setItem(chatStorageKey, JSON.stringify(messages));
+  }, [chatStorageKey, messages]);
 
-   const sendMessage = async () => {
+  const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: input };
@@ -42,7 +48,6 @@ export default function ChatPage() {
     setIsLoading(true);
 
     try {
-      // Call your FastAPI backend!
       const res = await fetch("http://localhost:8000/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -57,7 +62,7 @@ export default function ChatPage() {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         content: data.answer,
-        tool: data.tool_used || undefined, // Pass the tool name to the UI
+        tool: data.tool_used || undefined,
       };
       setMessages((prev) => [...prev, botMsg]);
     } catch (error) {
@@ -74,6 +79,11 @@ export default function ChatPage() {
       setIsLoading(false);
     }
   };
+
+  if (showData) {
+    return <DataView datasetName={datasetName} onBack={() => setShowData(false)} />;
+  }
+
   return (
     <div className="flex h-screen w-full overflow-hidden">
       {/* --- Sidebar --- */}
@@ -87,17 +97,28 @@ export default function ChatPage() {
           <div className="mb-6">
             <div className="flex items-center justify-between text-[10px] font-bold tracking-widest text-muted uppercase mb-2 px-1">
               <span>Your Datasets</span>
-              <Plus size={14} className="cursor-pointer hover:text-ink" />
+              <button onClick={onAddDataset} aria-label="Add a dataset">
+                <Plus size={14} className="cursor-pointer hover:text-ink" />
+              </button>
             </div>
             <div className="space-y-1">
-              <button className="w-full text-left px-3 py-2 bg-white rounded-lg border border-border shadow-sm group">
+              <button
+                onClick={() => setShowData(true)}
+                className="w-full text-left px-3 py-2 bg-white rounded-lg border border-border shadow-sm group"
+              >
                 <div className="flex items-center gap-2 font-medium text-sm text-ink">
                   <Table size={14} className="text-primary" />
-                  Q1 Dataset
+                  <span className="truncate">{datasetName}</span>
                 </div>
                 <div className="text-xs text-muted mt-1 ml-6 flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-primary" /> 1,248 rows
+                  <div className="w-1.5 h-1.5 rounded-full bg-primary" /> View dataset
                 </div>
+              </button>
+              <button
+                onClick={() => setShowData(true)}
+                className="text-xs text-primary font-medium hover:underline mt-2 ml-1 block text-left"
+              >
+                View data table
               </button>
             </div>
           </div>
@@ -105,10 +126,14 @@ export default function ChatPage() {
           <div>
             <div className="text-[10px] font-bold tracking-widest text-muted uppercase mb-2 px-1">Conversations</div>
             <div className="space-y-0.5">
-              <button className="w-full text-left px-3 py-2 rounded-lg bg-sage/50 text-ink group">
-                <div className="text-sm font-medium truncate">How are sales looking?</div>
-                <div className="text-[11px] text-muted mt-0.5">Just now</div>
-              </button>
+              {messages.some((message) => message.role === "user") && (
+                <div className="w-full text-left px-3 py-2 rounded-lg bg-sage/50 text-ink">
+                  <div className="text-sm font-medium truncate">
+                    {[...messages].reverse().find((message) => message.role === "user")?.content}
+                  </div>
+                  <div className="text-[11px] text-muted mt-0.5">Current conversation</div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -125,13 +150,21 @@ export default function ChatPage() {
         {/* Header */}
         <header className="h-14 border-b border-border flex items-center px-6 bg-background/80 backdrop-blur-sm sticky top-0 z-10">
           <div className="flex items-center gap-1 font-medium text-sm cursor-pointer hover:bg-black/5 px-2 py-1 rounded-md transition-colors">
-            Q1 Dataset <ChevronDown size={14} className="text-muted" />
+            {datasetName} <ChevronDown size={14} className="text-muted" />
           </div>
         </header>
 
         {/* Thread */}
         <div className="flex-1 overflow-y-auto px-4 md:px-8 py-8">
           <div className="max-w-3xl mx-auto space-y-8">
+            {messages.length === 0 && (
+              <div className="py-16 text-center">
+                <h1 className="font-serif text-3xl text-primary">Your data is ready.</h1>
+                <p className="mt-2 text-sm text-muted">
+                  Ask a question about {datasetName} to get started.
+                </p>
+              </div>
+            )}
             {messages.map((msg) => (
               <div key={msg.id} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
                 <div className="text-[10px] font-bold tracking-widest text-muted uppercase mb-2 px-1 flex items-center gap-2">
@@ -186,7 +219,7 @@ export default function ChatPage() {
         <div className="px-4 md:px-8 pb-6 pt-2 bg-gradient-to-t from-background via-background to-transparent">
           <div className="max-w-3xl mx-auto">
             <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
-              {["Show me the first few rows", "What's the total sales?", "Chart this by month"].map((chip) => (
+              {["Show me the first few rows", "What's the total sales?", "Chart this by month", "what is an outlier?"].map((chip) => (
                 <button 
                   key={chip}
                   onClick={() => setInput(chip)}
@@ -210,7 +243,7 @@ export default function ChatPage() {
                     sendMessage();
                   }
                 }}
-                placeholder="Ask anything about Q1 Dataset..."
+                placeholder={`Ask anything about ${datasetName}...`}
                 className="flex-1 bg-transparent border-0 focus:ring-0 resize-none py-3.5 px-1 text-[15px] max-h-32 min-h-[52px] outline-none"
                 rows={1}
               />

@@ -1,0 +1,12 @@
+Student, Age, Gender, Marks
+S1,	21,	Male,	65
+S2,	22,	Female,	78
+S3,	20,	Male,	Missing
+S4,	23,	Female,	85
+S5,	21,	Male,	72
+S6,	22,	Female,	150
+S7,	20,	Male,	68
+S8,	24,	Female,	80
+S9,	21,	Male,	75
+S10, 22, Female, Missing
+
