@@ -333,8 +333,8 @@ async def call_ai_async(
     keys = [k for k in load_keys() if k.enabled]
     if not keys:
         return (
-            "NO KEYS YET — add one from aistudio.google.com or "
-            "console.groq.com, then try again."
+            "The AI assistant is not configured yet. Please contact the "
+            "Toolkit administrator."
         )
     if only_key_id:
         keys = [k for k in keys if k.id == only_key_id]

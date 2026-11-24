@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from toolkit.adapters import registry as adapter_registry
 from toolkit.brain import keys as keys_mod
+from toolkit.brain.http import call_ai_async
 from toolkit.brain.providers import (
     BOOK,
     build_request,
@@ -21,6 +23,8 @@ from toolkit.config import settings
 @pytest.fixture(autouse=True)
 def clean_db(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("TOOLKIT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("TOOLKIT_AI_PROVIDER", "")
+    monkeypatch.setenv("TOOLKIT_AI_API_KEY", "")
     settings.cache_clear()
     adapter_registry.reset()
     keys_mod.load_keys.cache_clear() if hasattr(keys_mod.load_keys, "cache_clear") else None
@@ -168,6 +172,37 @@ def test_pick_best_model_skips_excluded():
 
 def test_load_keys_starts_empty():
     assert keys_mod.load_keys() == []
+
+
+def test_load_keys_includes_server_managed_environment_key(monkeypatch):
+    monkeypatch.setenv("TOOLKIT_AI_PROVIDER", "gemini")
+    monkeypatch.setenv("TOOLKIT_AI_API_KEY", "AIzaTestKey")
+    settings.cache_clear()
+
+    keys = keys_mod.load_keys()
+
+    assert len(keys) == 1
+    assert keys[0].provider == "gemini"
+    assert keys[0].key == "AIzaTestKey"
+    assert keys[0].nickname == "Google Gemini (environment)"
+    assert keys_mod.key_by_id(keys[0].id) is None
+
+
+def test_load_keys_requires_provider_and_key_together(monkeypatch):
+    monkeypatch.setenv("TOOLKIT_AI_API_KEY", "test-key")
+    settings.cache_clear()
+
+    with pytest.raises(ValueError, match="TOOLKIT_AI_PROVIDER"):
+        keys_mod.load_keys()
+
+
+def test_chat_does_not_ask_end_users_to_supply_provider_keys():
+    answer = asyncio.run(call_ai_async("hello"))
+
+    assert answer == (
+        "The AI assistant is not configured yet. Please contact the "
+        "Toolkit administrator."
+    )
 
 
 def test_save_and_load_key():

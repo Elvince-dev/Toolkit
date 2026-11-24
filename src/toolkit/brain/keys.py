@@ -148,12 +148,48 @@ def _key_to_row(k: Key) -> tuple:
 # ── public API ────────────────────────────────────────────────────────
 
 def load_keys() -> list[Key]:
-    """Every stored key, in insertion order."""
+    """Every stored key plus an optional server-managed environment key."""
     with _db() as conn:
         rows = conn.execute(
             "SELECT * FROM keys ORDER BY created_at ASC"
         ).fetchall()
-    return [_row_to_key(r) for r in rows]
+    keys = [_row_to_key(r) for r in rows]
+
+    config = settings()
+    provider_id = (config.ai_provider or "").strip().lower()
+    raw_key = (
+        config.ai_api_key.get_secret_value().strip()
+        if config.ai_api_key
+        else ""
+    )
+    if not provider_id and not raw_key:
+        return keys
+    if not provider_id or not raw_key:
+        raise ValueError(
+            "Configure both TOOLKIT_AI_PROVIDER and TOOLKIT_AI_API_KEY."
+        )
+
+    provider = BOOK.get(provider_id)
+    if provider is None:
+        raise ValueError("TOOLKIT_AI_PROVIDER must name a supported provider.")
+
+    account = (config.ai_account or "").strip()
+    if provider.needs_account and not account:
+        raise ValueError(
+            "TOOLKIT_AI_ACCOUNT is required for the configured AI provider."
+        )
+
+    if not any(key.key == raw_key for key in keys):
+        keys.append(
+            Key(
+                id=f"env-{provider_id}",
+                provider=provider_id,
+                key=raw_key,
+                account=account,
+                nickname=f"{provider.label} (environment)",
+            )
+        )
+    return keys
 
 
 def save_key(k: Key) -> None:

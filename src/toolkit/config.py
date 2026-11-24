@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SheetAdapterName = Literal["csv", "sqlite", "postgres", "excel", "google"]
@@ -41,6 +41,9 @@ class Settings(BaseSettings):
             "TOOLKIT_SUPABASE_PUBLISHABLE_KEY",
         ),
     )
+    ai_provider: str | None = None
+    ai_api_key: SecretStr | None = None
+    ai_account: str | None = None
     frontend_origin: str = "http://localhost:5173"
 
     sheet_adapter: SheetAdapterName = "csv"

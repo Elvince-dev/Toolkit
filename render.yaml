@@ -13,3 +13,7 @@ services:
         sync: false
       - key: SUPABASE_PUBLISHABLE_KEY
         sync: false
+      - key: TOOLKIT_AI_PROVIDER
+        sync: false
+      - key: TOOLKIT_AI_API_KEY
+        sync: false
