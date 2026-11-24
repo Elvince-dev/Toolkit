@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from toolkit.adapters import registry as adapter_registry
+from toolkit.brain import http as http_mod
 from toolkit.brain import keys as keys_mod
-from toolkit.brain.http import call_ai_async
 from toolkit.brain.providers import (
     BOOK,
     build_request,
@@ -197,12 +197,38 @@ def test_load_keys_requires_provider_and_key_together(monkeypatch):
 
 
 def test_chat_does_not_ask_end_users_to_supply_provider_keys():
-    answer = asyncio.run(call_ai_async("hello"))
+    answer = asyncio.run(http_mod.call_ai_async("hello"))
 
     assert answer == (
         "The AI assistant is not configured yet. Please contact the "
         "Toolkit administrator."
     )
+
+
+def test_async_chat_uses_async_model_discovery(monkeypatch):
+    monkeypatch.setenv("TOOLKIT_AI_PROVIDER", "gemini")
+    monkeypatch.setenv("TOOLKIT_AI_API_KEY", "AIzaTestKey")
+    settings.cache_clear()
+
+    async def discover(key):
+        assert key.provider == "gemini"
+        return ["test-model"], "test-model", ""
+
+    async def complete(key, prompt, **kwargs):
+        assert key.model == "test-model"
+        return {"ok": True, "text": "answer"}
+
+    monkeypatch.setattr(keys_mod, "discover_model_for_key_async", discover)
+    monkeypatch.setattr(
+        keys_mod,
+        "discover_model_for_key",
+        lambda key: pytest.fail("sync model discovery used in async chat"),
+    )
+    monkeypatch.setattr(http_mod, "_post_completion", complete)
+
+    answer = asyncio.run(http_mod.call_ai_async("question"))
+
+    assert answer == "answer"
 
 
 def test_save_and_load_key():

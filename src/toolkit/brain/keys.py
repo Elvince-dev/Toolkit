@@ -656,6 +656,21 @@ def discover_model_for_key(key: Key) -> tuple[list[str], str, str]:
     from toolkit.brain.http import fetch_model_list
 
     result = fetch_model_list(key)
+    return _select_model_for_key(key, result)
+
+
+async def discover_model_for_key_async(key: Key) -> tuple[list[str], str, str]:
+    """Discover a model using the caller's running event loop."""
+    from toolkit.brain.http import fetch_model_list_async
+
+    result = await fetch_model_list_async(key)
+    return _select_model_for_key(key, result)
+
+
+def _select_model_for_key(
+    key: Key,
+    result: dict[str, Any],
+) -> tuple[list[str], str, str]:
     if not result.get("ok"):
         return [], "", result.get("why") or "The provider would not list models."
 

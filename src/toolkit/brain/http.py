@@ -415,7 +415,7 @@ async def _try_one(
     from toolkit.brain.keys import (
         bad_models_for,
         clear_bad_models,
-        discover_model_for_key,
+        discover_model_for_key_async,
         mark_bad_model,
         pick_best_model,
         set_key_model,
@@ -427,7 +427,7 @@ async def _try_one(
 
     # If the key has no model, discover one.
     if not key.model:
-        models, model, why = discover_model_for_key(key)
+        models, model, why = await discover_model_for_key_async(key)
         if not model:
             return {"ok": False, "why": why or "no usable model"}
         key.model = model
@@ -449,7 +449,7 @@ async def _try_one(
         last_why = result.get("why", "")
         for _ in range(4):
             mark_bad_model(key.id, key.model)
-            models, model, why = discover_model_for_key(key)
+            models, model, why = await discover_model_for_key_async(key)
             if not model:
                 return {"ok": False, "why": why, "model_bad": True,
                         "tried": ", ".join(tried)}
