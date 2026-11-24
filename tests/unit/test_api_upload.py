@@ -6,39 +6,41 @@ from io import BytesIO
 from fastapi import UploadFile
 
 from api import main
-from toolkit.adapters.registry import reset, sheet
-from toolkit.config import settings
-from toolkit.tools.data import _describe_sheet
+from api.supabase import AuthenticatedUser
+
+USER_ID = "00000000-0000-0000-0000-000000000001"
 
 
-def test_uploaded_csv_is_available_to_dataset_and_agent_tools(
-    tmp_path, monkeypatch
-):
-    settings.cache_clear()
-    monkeypatch.setenv("TOOLKIT_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("TOOLKIT_CSV_PATH", str(tmp_path / "original-csv"))
+class UploadClient:
+    def __init__(self) -> None:
+        self.uploaded: dict[str, bytes] = {}
+        self.dataset_body: dict[str, object] | None = None
 
-    try:
-        upload = UploadFile(
-            filename="Quarter 1.csv",
-            file=BytesIO(b"Month,Sales\nJanuary,120\nFebruary,180\n"),
-        )
-        result = asyncio.run(main.upload_file(upload))
+    async def upload(self, path: str, content: bytes, *, upsert: bool = False) -> None:
+        assert not upsert
+        self.uploaded[path] = content
 
-        assert result["dataset"] == "Quarter 1"
-        assert settings().csv_path == tmp_path / "uploads"
-        assert sheet().read_tab("Quarter 1").rows == [
-            ["January", "120"],
-            ["February", "180"],
-        ]
-        dataset = asyncio.run(main.get_dataset("Quarter 1"))
-        assert dataset["name"] == "Quarter 1"
-        assert dataset["row_count"] == 2
-        assert "Quarter 1" in _describe_sheet({})
+    async def rest(self, method: str, table: str, **kwargs: object) -> object:
+        assert (method, table) == ("POST", "datasets")
+        body = kwargs["body"]
+        assert isinstance(body, dict)
+        self.dataset_body = body
+        return [{**body, "created_at": "2026-01-01T00:00:00Z"}]
 
-        settings().csv_path = tmp_path / "original-csv"
-        main.activate_existing_uploads()
-        assert "Quarter 1" in sheet().list_tabs()
-    finally:
-        reset()
-        settings.cache_clear()
+
+def test_upload_stores_csv_under_authenticated_user_and_returns_dataset(monkeypatch):
+    client = UploadClient()
+    user = AuthenticatedUser(id=USER_ID, access_token="test-token")
+    monkeypatch.setattr(main, "_client", lambda authenticated_user: client)
+    upload = UploadFile(
+        filename="Quarter 1.csv",
+        file=BytesIO(b"Month,Sales\nJanuary,120\nFebruary,180\n"),
+    )
+
+    result = asyncio.run(main.upload_file(upload, user))
+
+    assert result["name"] == "Quarter 1"
+    assert result["row_count"] == 2
+    assert result["storage_path"].startswith(f"{USER_ID}/")
+    assert client.uploaded[result["storage_path"]].startswith(b"Month,Sales")
+    assert client.dataset_body["user_id"] == USER_ID

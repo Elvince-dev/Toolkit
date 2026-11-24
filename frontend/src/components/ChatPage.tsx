@@ -1,8 +1,12 @@
 // import ReactMarkdown from "react-markdown";
 // import remarkGfm from "remark-gfm";
 import { useState, useRef, useEffect } from "react";
-import { ArrowUp, Check, ChevronDown, Plus, Settings, Table } from "lucide-react";
+import { ArrowUp, Check, Plus } from "lucide-react";
 import DataView from "./DataView";
+import SettingsPage from "./SettingsPage";
+import WorkspaceShell from "./WorkspaceShell";
+import { apiErrorMessage, authenticatedFetch } from "../api";
+import type { ChatMessage, Conversation, Dataset } from "../types";
 
 type Message = {
   id: string;
@@ -12,35 +16,155 @@ type Message = {
 };
 
 interface Props {
-  datasetName: string;
+  dataset: Dataset;
+  datasets: Dataset[];
+  email: string;
   onAddDataset: () => void;
+  onSelectDataset: (dataset: Dataset) => void;
+  onSignOut: () => void;
 }
 
-export default function ChatPage({ datasetName, onAddDataset }: Props) {
-  const chatStorageKey = `toolkit_chat_${datasetName}`;
-  const [messages, setMessages] = useState<Message[]>(() => {
-    const saved = localStorage.getItem(chatStorageKey);
-    return saved ? JSON.parse(saved) : [];
-  });
-
+export default function ChatPage({
+  dataset,
+  datasets,
+  email,
+  onAddDataset,
+  onSelectDataset,
+  onSignOut,
+}: Props) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const [error, setError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const [showData, setShowData] = useState(false);
+  const [page, setPage] = useState<"chat" | "data" | "settings">("chat");
 
-  // Auto-scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
+  }, [messages, isLoading, activeConversationId]);
 
-  // Persist messages to localStorage
   useEffect(() => {
-    localStorage.setItem(chatStorageKey, JSON.stringify(messages));
-  }, [chatStorageKey, messages]);
+    const controller = new AbortController();
+    let active = true;
+
+    authenticatedFetch(`/api/conversations?dataset_id=${encodeURIComponent(dataset.id)}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await apiErrorMessage(response));
+        return response.json() as Promise<{ conversations: Conversation[] }>;
+      })
+      .then(async ({ conversations: loaded }) => {
+        if (!active) return;
+        if (loaded.length > 0) {
+          setConversations(loaded);
+          setActiveConversationId(loaded[0].id);
+          return;
+        }
+
+        const response = await authenticatedFetch("/api/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dataset_id: dataset.id }),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(await apiErrorMessage(response));
+        const conversation: Conversation = await response.json();
+        if (active) {
+          setConversations([conversation]);
+          setActiveConversationId(conversation.id);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active && !(cause instanceof DOMException && cause.name === "AbortError")) {
+          setError(cause instanceof Error ? cause.message : "Unable to load conversations.");
+          setIsLoadingHistory(false);
+        }
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [dataset.id]);
+
+  useEffect(() => {
+    if (!activeConversationId) return;
+    const controller = new AbortController();
+    let active = true;
+    authenticatedFetch(
+      `/api/conversations/${encodeURIComponent(activeConversationId)}/messages`,
+      { signal: controller.signal },
+    )
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await apiErrorMessage(response));
+        return response.json() as Promise<{ messages: ChatMessage[] }>;
+      })
+      .then(({ messages: loaded }) => {
+        if (active) {
+          setMessages(loaded.map((message) => ({
+            id: message.id,
+            role: message.role,
+            content: message.content,
+            tool: message.tool_used || undefined,
+          })));
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active && !(cause instanceof DOMException && cause.name === "AbortError")) {
+          setError(cause instanceof Error ? cause.message : "Unable to load this conversation.");
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoadingHistory(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [activeConversationId]);
+
+  const createConversation = async () => {
+    setError("");
+    setPage("chat");
+    try {
+      const response = await authenticatedFetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataset_id: dataset.id }),
+      });
+      if (!response.ok) throw new Error(await apiErrorMessage(response));
+      const conversation: Conversation = await response.json();
+      setMessages([]);
+      setIsLoadingHistory(true);
+      setConversations((current) => [conversation, ...current]);
+      setActiveConversationId(conversation.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to create a conversation.");
+    }
+  };
+
+  const selectConversation = (conversationId: string) => {
+    setPage("chat");
+    if (conversationId === activeConversationId) return;
+    setMessages([]);
+    setError("");
+    setIsLoadingHistory(true);
+    setActiveConversationId(conversationId);
+  };
+
+  const openDataset = (selected: Dataset) => {
+    setPage("chat");
+    onSelectDataset(selected);
+  };
 
   const sendMessage = async () => {
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !activeConversationId) return;
 
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: input };
     setMessages((prev) => [...prev, userMsg]);
@@ -48,13 +172,17 @@ export default function ChatPage({ datasetName, onAddDataset }: Props) {
     setIsLoading(true);
 
     try {
-      const res = await fetch("http://localhost:8000/api/chat", {
+      const res = await authenticatedFetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMsg.content }),
+        body: JSON.stringify({
+          message: userMsg.content,
+          conversation_id: activeConversationId,
+          dataset_id: dataset.id,
+        }),
       });
       
-      if (!res.ok) throw new Error("Network response was not ok");
+      if (!res.ok) throw new Error(await apiErrorMessage(res));
       
       const data = await res.json();
       
@@ -65,6 +193,14 @@ export default function ChatPage({ datasetName, onAddDataset }: Props) {
         tool: data.tool_used || undefined,
       };
       setMessages((prev) => [...prev, botMsg]);
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === activeConversationId &&
+          conversation.title === "New conversation"
+            ? { ...conversation, title: userMsg.content.slice(0, 120) }
+            : conversation,
+        ),
+      );
     } catch (error) {
       console.error(error);
       setMessages((prev) => [
@@ -72,7 +208,7 @@ export default function ChatPage({ datasetName, onAddDataset }: Props) {
         { 
           id: Date.now().toString(), 
           role: "assistant", 
-          content: "Sorry, I couldn't connect to the Python server. Is it running?" 
+          content: error instanceof Error ? error.message : "The request failed. Please try again."
         },
       ]);
     } finally {
@@ -80,119 +216,63 @@ export default function ChatPage({ datasetName, onAddDataset }: Props) {
     }
   };
 
-  if (showData) {
-    return <DataView datasetName={datasetName} onBack={() => setShowData(false)} />;
-  }
-
   return (
-    <div className="flex h-screen w-full overflow-hidden">
-      {/* --- Sidebar --- */}
-      <aside className="w-64 bg-[#F5F3EF] border-r border-border flex flex-col flex-shrink-0 hidden md:flex">
-        <div className="p-4 flex items-center gap-2 mb-4">
-          <div className="w-6 h-6 bg-primary rounded-md flex items-center justify-center text-white text-xs font-bold">t</div>
-          <span className="font-serif font-bold text-xl tracking-tight">Toolkit</span>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-3">
-          <div className="mb-6">
-            <div className="flex items-center justify-between text-[10px] font-bold tracking-widest text-muted uppercase mb-2 px-1">
-              <span>Your Datasets</span>
-              <button onClick={onAddDataset} aria-label="Add a dataset">
-                <Plus size={14} className="cursor-pointer hover:text-ink" />
-              </button>
-            </div>
-            <div className="space-y-1">
-              <button
-                onClick={() => setShowData(true)}
-                className="w-full text-left px-3 py-2 bg-white rounded-lg border border-border shadow-sm group"
-              >
-                <div className="flex items-center gap-2 font-medium text-sm text-ink">
-                  <Table size={14} className="text-primary" />
-                  <span className="truncate">{datasetName}</span>
-                </div>
-                <div className="text-xs text-muted mt-1 ml-6 flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-primary" /> View dataset
-                </div>
-              </button>
-              <button
-                onClick={() => setShowData(true)}
-                className="text-xs text-primary font-medium hover:underline mt-2 ml-1 block text-left"
-              >
-                View data table
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <div className="text-[10px] font-bold tracking-widest text-muted uppercase mb-2 px-1">Conversations</div>
-            <div className="space-y-0.5">
-              {messages.some((message) => message.role === "user") && (
-                <div className="w-full text-left px-3 py-2 rounded-lg bg-sage/50 text-ink">
-                  <div className="text-sm font-medium truncate">
-                    {[...messages].reverse().find((message) => message.role === "user")?.content}
-                  </div>
-                  <div className="text-[11px] text-muted mt-0.5">Current conversation</div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="p-3 border-t border-border mt-auto">
-          <button className="flex items-center gap-2 text-sm font-medium text-muted hover:text-ink w-full px-2 py-2 rounded-md hover:bg-black/5 transition-colors">
-            <Settings size={16} /> Settings
-          </button>
-        </div>
-      </aside>
-
-      {/* --- Main Chat Area --- */}
-      <main className="flex-1 flex flex-col bg-background relative">
-        {/* Header */}
-        <header className="h-14 border-b border-border flex items-center px-6 bg-background/80 backdrop-blur-sm sticky top-0 z-10">
-          <div className="flex items-center gap-1 font-medium text-sm cursor-pointer hover:bg-black/5 px-2 py-1 rounded-md transition-colors">
-            {datasetName} <ChevronDown size={14} className="text-muted" />
-          </div>
-        </header>
-
-        {/* Thread */}
-        <div className="flex-1 overflow-y-auto px-4 md:px-8 py-8">
-          <div className="max-w-3xl mx-auto space-y-8">
-            {messages.length === 0 && (
+    <WorkspaceShell
+      datasets={datasets}
+      dataset={dataset}
+      conversations={conversations}
+      activeConversationId={activeConversationId}
+      page={page}
+      userEmail={email}
+      onSelectDataset={openDataset}
+      onSelectConversation={selectConversation}
+      onNewConversation={createConversation}
+      onAddDataset={onAddDataset}
+      onOpenData={() => setPage("data")}
+      onOpenChat={() => setPage("chat")}
+      onOpenSettings={() => setPage("settings")}
+      onSignOut={onSignOut}
+    >
+      {page === "chat" && (
+        <div className="flex h-full flex-col bg-background">
+          <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-7">
+            <div className="mx-auto max-w-[860px] space-y-7">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-muted">
+                Today
+              </p>
+            {error && <p role="alert" className="text-center text-sm text-red-600">{error}</p>}
+            {messages.length === 0 && activeConversationId && !isLoadingHistory && (
               <div className="py-16 text-center">
                 <h1 className="font-serif text-3xl text-primary">Your data is ready.</h1>
                 <p className="mt-2 text-sm text-muted">
-                  Ask a question about {datasetName} to get started.
+                  Ask a question about {dataset.name} to get started.
                 </p>
               </div>
             )}
             {messages.map((msg) => (
               <div key={msg.id} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
-                <div className="text-[10px] font-bold tracking-widest text-muted uppercase mb-2 px-1 flex items-center gap-2">
+                <div className="mb-2 flex items-center gap-2 px-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted">
                   {msg.role === "user" ? "You" : "Toolkit"}
                 </div>
                 
                 {msg.role === "user" ? (
-                  <div className="bg-sage text-ink px-5 py-3 rounded-2xl rounded-tr-sm max-w-[85%] text-[15px] leading-relaxed shadow-sm">
+                  <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-[#E7EEE4] px-5 py-3 text-[13px] leading-relaxed text-primary shadow-sm">
                     {msg.content}
                   </div>
                 ) : (
-                  <div className="bg-surface border border-border px-6 py-5 rounded-2xl rounded-tl-sm max-w-[90%] shadow-sm w-full">
-                    {/* Serif for the headline (first line) */}
-                    <div className="font-serif text-xl text-primary mb-3">
+                  <div className="w-full max-w-[95%] rounded-xl border border-border bg-surface px-5 py-4 shadow-sm md:px-6">
+                    <div className="mb-2 font-serif text-xl text-primary">
                       {msg.content.split('\n')[0]}
                     </div>
-                    {/* Sans for the rest */}
                     <div className="text-[15px] text-ink leading-relaxed whitespace-pre-wrap">
                       {msg.content.split('\n').slice(1).join('\n')}
                     </div>
                     
-                    {/* Tool Pill */}
                     {msg.tool && (
                       <div className="mt-4 flex items-center gap-2">
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sage/50 text-[11px] font-medium text-primary border border-primary/10">
+                        <div className="inline-flex items-center gap-1.5 rounded-lg bg-[#F1F2EC] px-3 py-1.5 text-[10px] font-medium text-primary">
                           <Check size={12} strokeWidth={3} />
                           {msg.tool.replace(/_/g, ' ')}
-                          <span className="text-muted ml-1 pl-2 border-l border-primary/20 cursor-pointer hover:underline">See details</span>
                         </div>
                       </div>
                     )}
@@ -203,8 +283,8 @@ export default function ChatPage({ datasetName, onAddDataset }: Props) {
             
             {isLoading && (
               <div className="flex flex-col items-start">
-                <div className="text-[10px] font-bold tracking-widest text-muted uppercase mb-2 px-1">Toolkit</div>
-                <div className="bg-surface border border-border px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm flex gap-1 items-center h-12">
+                <div className="mb-2 px-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted">Toolkit</div>
+                <div className="flex h-12 items-center gap-1 rounded-xl border border-border bg-surface px-4 shadow-sm">
                   <div className="w-1.5 h-1.5 bg-primary/40 rounded-full animate-bounce" />
                   <div className="w-1.5 h-1.5 bg-primary/40 rounded-full animate-bounce [animation-delay:-.15s]" />
                   <div className="w-1.5 h-1.5 bg-primary/40 rounded-full animate-bounce [animation-delay:-.3s]" />
@@ -215,23 +295,26 @@ export default function ChatPage({ datasetName, onAddDataset }: Props) {
           </div>
         </div>
 
-        {/* Composer */}
-        <div className="px-4 md:px-8 pb-6 pt-2 bg-gradient-to-t from-background via-background to-transparent">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
-              {["Show me the first few rows", "What's the total sales?", "Chart this by month", "what is an outlier?"].map((chip) => (
+        <div className="bg-gradient-to-t from-background via-background to-transparent px-4 pb-5 pt-2 md:px-8">
+          <div className="mx-auto max-w-[860px]">
+            <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+              {["Show me the first few rows", "What's the total sales?", "Chart this by month"].map((chip) => (
                 <button 
                   key={chip}
                   onClick={() => setInput(chip)}
-                  className="whitespace-nowrap px-3 py-1.5 bg-surface border border-border rounded-full text-xs font-medium text-muted hover:text-ink hover:border-primary/30 transition-colors shadow-sm"
+                  className="whitespace-nowrap rounded-md border border-border bg-[#F1F0EA] px-3 py-1.5 text-[10px] font-medium text-muted transition-colors hover:border-primary/30 hover:text-primary"
                 >
                   {chip}
                 </button>
               ))}
             </div>
 
-            <div className="relative flex items-end bg-surface border border-border rounded-2xl shadow-sm focus-within:border-primary/40 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
-              <button className="p-3 text-muted hover:text-ink transition-colors mb-0.5">
+            <div className="relative flex items-end rounded-2xl border border-border bg-surface shadow-sm transition-all focus-within:border-primary/40 focus-within:ring-1 focus-within:ring-primary/20">
+              <button
+                onClick={onAddDataset}
+                aria-label="Add a dataset"
+                className="mb-0.5 p-3 text-muted transition-colors hover:text-primary"
+              >
                 <Plus size={20} />
               </button>
               <textarea
@@ -243,25 +326,30 @@ export default function ChatPage({ datasetName, onAddDataset }: Props) {
                     sendMessage();
                   }
                 }}
-                placeholder={`Ask anything about ${datasetName}...`}
-                className="flex-1 bg-transparent border-0 focus:ring-0 resize-none py-3.5 px-1 text-[15px] max-h-32 min-h-[52px] outline-none"
+                placeholder={`Ask anything about ${dataset.name}...`}
+                className="max-h-32 min-h-[52px] flex-1 resize-none border-0 bg-transparent px-1 py-3.5 text-[13px] outline-none focus:ring-0"
                 rows={1}
               />
               <button 
                 onClick={sendMessage}
-                disabled={!input.trim() || isLoading}
-                className="p-2 m-2 bg-primary text-white rounded-xl hover:opacity-90 disabled:opacity-50 transition-all"
+                disabled={!input.trim() || isLoading || !activeConversationId || isLoadingHistory}
+                className="m-2 rounded-full bg-primary p-2.5 text-white transition-all hover:opacity-90 disabled:opacity-50"
               >
                 <ArrowUp size={18} />
               </button>
             </div>
             
-            <div className="text-center mt-3 flex items-center justify-center gap-1 text-[10px] text-muted">
+            <div className="mt-3 flex items-center justify-center gap-1 text-center text-[9px] text-muted">
               <Check size={10} /> Only you can see this conversation.
             </div>
           </div>
         </div>
-      </main>
-    </div>
+        </div>
+      )}
+      {page === "data" && <DataView dataset={dataset} />}
+      {page === "settings" && (
+        <SettingsPage datasets={datasets} email={email} onSelectDataset={openDataset} />
+      )}
+    </WorkspaceShell>
   );
 }

@@ -6,14 +6,22 @@ result is cached — a test that changes settings must call reset().
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
+from typing import Iterator
 
 from toolkit.adapters.base import CalendarAdapter, MailAdapter, SheetAdapter
 from toolkit.config import settings
 
+_request_sheet: ContextVar[SheetAdapter | None] = ContextVar(
+    "toolkit_request_sheet",
+    default=None,
+)
+
 
 @lru_cache(maxsize=1)
-def sheet() -> SheetAdapter:
+def _default_sheet() -> SheetAdapter:
     name = settings().sheet_adapter
     if name == "csv":
         from toolkit.adapters.sheets.csv_folder import CsvFolderAdapter
@@ -33,6 +41,20 @@ def sheet() -> SheetAdapter:
         from toolkit.adapters.sheets.google_sheets import GoogleSheetsAdapter
         return GoogleSheetsAdapter()  # type: ignore[return-value]
     raise ValueError(f"Unknown sheet adapter: {name!r}")
+
+
+def sheet() -> SheetAdapter:
+    """Return the request-scoped adapter, or the configured default."""
+    return _request_sheet.get() or _default_sheet()
+
+
+@contextmanager
+def using_sheet_adapter(adapter: SheetAdapter) -> Iterator[None]:
+    token = _request_sheet.set(adapter)
+    try:
+        yield
+    finally:
+        _request_sheet.reset(token)
 
 
 @lru_cache(maxsize=1)
@@ -90,6 +112,6 @@ def mail():
         
 def reset() -> None:
     """Clear cached adapters. Tests call this when settings change."""
-    sheet.cache_clear()
+    _default_sheet.cache_clear()
     mail.cache_clear()
     calendar.cache_clear()

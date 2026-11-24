@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SheetAdapterName = Literal["csv", "sqlite", "postgres", "excel", "google"]
@@ -29,6 +30,18 @@ class Settings(BaseSettings):
     env: str = "dev"
     log_level: str = "INFO"
     data_dir: Path = Path("./data")
+    supabase_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SUPABASE_URL", "TOOLKIT_SUPABASE_URL"),
+    )
+    supabase_publishable_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPABASE_PUBLISHABLE_KEY",
+            "TOOLKIT_SUPABASE_PUBLISHABLE_KEY",
+        ),
+    )
+    frontend_origin: str = "http://localhost:5173"
 
     sheet_adapter: SheetAdapterName = "csv"
     mail_adapter: MailAdapterName = "fake"

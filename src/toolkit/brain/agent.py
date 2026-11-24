@@ -30,7 +30,7 @@ from typing import Any
 
 from toolkit.brain.http import call_ai_async, run_sync
 from toolkit.brain.presentation import present_direct_answer
-from toolkit.brain.history import load_recent, save_turn
+from toolkit.brain.history import Turn, load_recent, save_turn
 from toolkit.brain.verify import (
     check_claims,
     critique,
@@ -92,6 +92,8 @@ async def run_agent(
     *,
     source: str = "api",
     system: str | None = None,
+    history: list[Turn] | None = None,
+    persist_history: bool = True,
 ) -> AgentResult:
     """The one entry point. Never raises; always returns a result."""
     started = time.monotonic()
@@ -109,9 +111,9 @@ async def run_agent(
             if direct.ok else direct.answer
         )
 
-         # Save direct hits to history too
-        save_turn("user", request)
-        save_turn("assistant", answer)
+        if persist_history:
+            save_turn("user", request)
+            save_turn("assistant", answer)
         
         return AgentResult(
             ok=direct.ok,
@@ -132,8 +134,13 @@ async def run_agent(
     full_system = base_system + "\n\nTOOLS YOU MAY USE:\n" + tool_menu
     
     # Load the last 10 turns (5 exchanges) for context
-    history = load_recent(10)
-    past_turns = [{"role": t.role, "text": t.text} for t in history]
+    conversation_history = (
+        load_recent(10) if history is None else history[-10:]
+    )
+    past_turns = [
+        {"role": turn.role, "text": turn.text}
+        for turn in conversation_history
+    ]
 
     for step in range(MAX_STEPS):
         prompt = _build_prompt(request, notes)
@@ -170,9 +177,9 @@ async def run_agent(
             if invented is not None:
                 answer += "\n\n" + invented.say
 
-            # Save the exchange to history
-            save_turn("user", request)
-            save_turn("assistant", answer)
+            if persist_history:
+                save_turn("user", request)
+                save_turn("assistant", answer)
 
             return AgentResult(
                 ok=True,
