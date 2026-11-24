@@ -33,6 +33,11 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
+def health_check() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=5000)
     conversation_id: UUID
