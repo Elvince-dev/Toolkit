@@ -197,12 +197,25 @@ def test_load_keys_requires_provider_and_key_together(monkeypatch):
 
 
 def test_chat_does_not_ask_end_users_to_supply_provider_keys():
-    answer = asyncio.run(http_mod.call_ai_async("hello"))
+    with pytest.raises(
+        http_mod.AIProviderError,
+        match="contact the Toolkit administrator",
+    ):
+        asyncio.run(http_mod.call_ai_async("hello"))
 
-    assert answer == (
-        "The AI assistant is not configured yet. Please contact the "
-        "Toolkit administrator."
-    )
+
+def test_chat_stops_when_provider_model_discovery_fails(monkeypatch):
+    monkeypatch.setenv("TOOLKIT_AI_PROVIDER", "gemini")
+    monkeypatch.setenv("TOOLKIT_AI_API_KEY", "AIzaTestKey")
+    settings.cache_clear()
+
+    async def fail_discovery(key):
+        return [], "", "Google Gemini: invalid API key"
+
+    monkeypatch.setattr(keys_mod, "discover_model_for_key_async", fail_discovery)
+
+    with pytest.raises(http_mod.AIProviderError, match="invalid API key"):
+        asyncio.run(http_mod.call_ai_async("question"))
 
 
 def test_async_chat_uses_async_model_discovery(monkeypatch):

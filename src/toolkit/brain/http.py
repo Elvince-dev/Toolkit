@@ -55,6 +55,10 @@ def run_sync(coro):
 TIMEOUT = 30.0
 
 
+class AIProviderError(RuntimeError):
+    """The configured AI provider could not produce a completion."""
+
+
 # ── model list ────────────────────────────────────────────────────────
 
 async def fetch_model_list_async(key: Key) -> dict[str, Any]:
@@ -315,9 +319,8 @@ async def call_ai_async(
       4. If every key fails, return a sentence explaining what went
          wrong. Never raises.
 
-    The response is always a string, on purpose — the agent loop
-    treats "here is the answer" and "here is why I could not answer"
-    as the same thing, because both are worth saying to the user.
+    Provider failures raise AIProviderError so the agent can stop
+    instead of treating an error message as a model response.
     """
     from toolkit.brain.keys import (
         bad_models_for,
@@ -332,14 +335,14 @@ async def call_ai_async(
 
     keys = [k for k in load_keys() if k.enabled]
     if not keys:
-        return (
+        raise AIProviderError(
             "The AI assistant is not configured yet. Please contact the "
             "Toolkit administrator."
         )
     if only_key_id:
         keys = [k for k in keys if k.id == only_key_id]
         if not keys:
-            return "That key is gone."
+            raise AIProviderError("That AI provider key is no longer available.")
 
     # Sort by reliability, most reliable first. Ties broken randomly
     # so we do not always hammer the same key.
@@ -386,16 +389,16 @@ async def call_ai_async(
         errors.append(f"{k.label}: {result.get('why', 'unknown')[:120]}")
 
     if resting_count and resting_count == len(keys):
-        return (
+        raise AIProviderError(
             "ALL KEYS ARE RESTING — wait about a minute, or add "
             "another key."
         )
     if errors:
-        return (
+        raise AIProviderError(
             "I could not get an answer. What each key said:\n"
             + "\n".join(f"  · {e}" for e in errors[:5])
         )
-    return "NO KEY AVAILABLE — every key is off."
+    raise AIProviderError("No AI provider key is available; every key is disabled.")
 
 
 async def _try_one(
