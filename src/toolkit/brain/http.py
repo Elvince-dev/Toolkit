@@ -383,7 +383,8 @@ async def call_ai_async(
             continue
         if result.get("model_bad") and result.get("tried"):
             errors.append(
-                f"{k.label}: models tried {result['tried']}"
+                f"{k.label}: {result.get('why', 'model rejected')[:120]} "
+                f"(models tried: {result['tried']})"
             )
             continue
         errors.append(f"{k.label}: {result.get('why', 'unknown')[:120]}")
@@ -452,9 +453,13 @@ async def _try_one(
         last_why = result.get("why", "")
         for _ in range(4):
             mark_bad_model(key.id, key.model)
-            models, model, why = await discover_model_for_key_async(key)
+            models, model, why = await discover_model_for_key_async(
+                key,
+                exclude=tried,
+            )
             if not model:
-                return {"ok": False, "why": why, "model_bad": True,
+                reason = f"{last_why}. {why}" if why else last_why
+                return {"ok": False, "why": reason, "model_bad": True,
                         "tried": ", ".join(tried)}
             key.model = model
             key.models = models
@@ -474,7 +479,7 @@ async def _try_one(
             last_why = result.get("why", "")
 
         return {"ok": False, "why": last_why, "model_bad": True,
-                "tried": ", ".join(tried[:4])}
+                "tried": ", ".join(tried)}
 
     return result
 

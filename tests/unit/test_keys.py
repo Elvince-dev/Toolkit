@@ -244,6 +244,39 @@ def test_async_chat_uses_async_model_discovery(monkeypatch):
     assert answer == "answer"
 
 
+def test_async_chat_retries_each_model_once_and_surfaces_reason(monkeypatch):
+    monkeypatch.setenv("TOOLKIT_AI_PROVIDER", "gemini")
+    monkeypatch.setenv("TOOLKIT_AI_API_KEY", "AIzaTestKey")
+    settings.cache_clear()
+    tried_models: list[str] = []
+    available_models = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
+
+    async def discover(key, *, exclude=None):
+        next_model = next(
+            (model for model in available_models if model not in (exclude or [])),
+            "",
+        )
+        return available_models, next_model, "No untried model" if not next_model else ""
+
+    async def reject_model(key, prompt, **kwargs):
+        tried_models.append(key.model)
+        return {
+            "ok": False,
+            "why": f"{key.model} rejected the request",
+            "model_bad": True,
+        }
+
+    monkeypatch.setattr(keys_mod, "discover_model_for_key_async", discover)
+    monkeypatch.setattr(http_mod, "_post_completion", reject_model)
+
+    with pytest.raises(http_mod.AIProviderError) as exc_info:
+        asyncio.run(http_mod.call_ai_async("question"))
+
+    assert tried_models == available_models
+    assert "gemini-2.5-flash rejected the request" in str(exc_info.value)
+    assert "models tried: " + ", ".join(available_models) in str(exc_info.value)
+
+
 def test_save_and_load_key():
     k = keys_mod.Key(
         id="k1", provider="groq", key="gsk_test",

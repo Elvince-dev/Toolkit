@@ -659,17 +659,23 @@ def discover_model_for_key(key: Key) -> tuple[list[str], str, str]:
     return _select_model_for_key(key, result)
 
 
-async def discover_model_for_key_async(key: Key) -> tuple[list[str], str, str]:
+async def discover_model_for_key_async(
+    key: Key,
+    *,
+    exclude: list[str] | None = None,
+) -> tuple[list[str], str, str]:
     """Discover a model using the caller's running event loop."""
     from toolkit.brain.http import fetch_model_list_async
 
     result = await fetch_model_list_async(key)
-    return _select_model_for_key(key, result)
+    return _select_model_for_key(key, result, exclude=exclude)
 
 
 def _select_model_for_key(
     key: Key,
     result: dict[str, Any],
+    *,
+    exclude: list[str] | None = None,
 ) -> tuple[list[str], str, str]:
     if not result.get("ok"):
         return [], "", result.get("why") or "The provider would not list models."
@@ -679,9 +685,11 @@ def _select_model_for_key(
     if not ids:
         return [], "", "The provider listed no chat models for that key."
 
-    excluded = bad_models_for(key.id)
+    excluded = [*bad_models_for(key.id), *(exclude or [])]
     best = pick_best_model(ids, excluded, meta)
     if not best:
+        if exclude:
+            return ids, "", "No untried chat models remain for this provider key."
         return ids, "", "The provider listed models but none looked usable."
     return ids, best, ""
 
